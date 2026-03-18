@@ -50,6 +50,10 @@ If Node.js is not installed on your system:
   curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
   sudo dnf install -y nodejs
   ```
+- **FreeBSD:**
+  ```bash
+  pkg install node22 npm
+  ```
 - **Any OS via nvm** (recommended for developers):
   ```bash
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash

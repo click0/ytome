@@ -46,6 +46,10 @@
   curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
   sudo dnf install -y nodejs
   ```
+- **FreeBSD:**
+  ```bash
+  pkg install node22 npm
+  ```
 - **Будь-яка ОС через nvm** (рекомендовано для розробників):
   ```bash
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
