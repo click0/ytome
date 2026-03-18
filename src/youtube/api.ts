@@ -7,8 +7,11 @@ import { trackQuota, assertQuota } from '../db/quota';
 import { axiosProxyConfig, googleApiProxyConfig, getProxyMode } from '../proxy/manager';
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
+import { createLogger } from '../logger';
 
 dotenv.config();
+
+const log = createLogger('youtube');
 
 // YouTube client без проксі (для googleapis через fetchOptions)
 const youtube = google.youtube({
@@ -94,7 +97,7 @@ export async function getChannelInfo(channelIdOrHandle: string): Promise<Channel
       video_count:      parseInt(channel.statistics?.videoCount || '0'),
     };
   } catch (err) {
-    console.error('getChannelInfo error:', err);
+    log.error({ error: (err as Error).message }, 'getChannelInfo failed');
     return null;
   }
 }
@@ -225,7 +228,7 @@ export async function fetchTranscript(videoId: string): Promise<{
       language: 'auto',
     };
   } catch (err) {
-    console.warn(`fetchTranscript(${videoId}): youtube-transcript failed, trying yt-dlp fallback...`);
+    log.warn({ videoId }, 'youtube-transcript failed, trying yt-dlp fallback');
     try {
       const srt = await downloadSubtitles(videoId);
       if (srt) {
@@ -233,7 +236,7 @@ export async function fetchTranscript(videoId: string): Promise<{
         return { text, segments: [], language: 'auto' };
       }
     } catch (e2) {
-      console.error(`fetchTranscript(${videoId}) yt-dlp fallback also failed:`, e2);
+      log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
     }
     return null;
   }
@@ -263,7 +266,7 @@ export async function downloadThumbnail(
       writer.on('error', reject);
     });
   } catch (err) {
-    console.error(`downloadThumbnail(${videoId}) error:`, err);
+    log.error({ videoId, error: (err as Error).message }, 'thumbnail download failed');
     return null;
   }
 }

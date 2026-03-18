@@ -15,6 +15,9 @@ import axios from 'axios';
 import { askClaude, claudeAvailable, ClaudeModel } from './claude';
 import { askProvider, loadProviderConfigs, ProviderName } from './providers';
 import { getDb } from '../db/init';
+import { createLogger } from '../logger';
+
+const log = createLogger('ai');
 
 // =============================================
 // Типи
@@ -239,7 +242,7 @@ async function askViaProxy(req: AIRequest): Promise<AIResponse> {
   const provider = `proxy:${new URL(proxyUrl).hostname}:${model}`;
 
   logUsage(provider, req.tag ?? 'ai');
-  console.log(`[${req.tag ?? 'ai'}] ✅ ${provider} (${latency}ms) [proxy]`);
+  log.info({ provider, latencyMs: latency, tag: req.tag }, 'proxy AI response');
 
   return { text, provider, latency_ms: latency };
 }
@@ -303,7 +306,7 @@ export async function ask(req: AIRequest): Promise<AIResponse> {
     try {
       return await askViaProxy(req);
     } catch (e: any) {
-      console.warn(`[${req.tag ?? 'ai'}] ⚠ Proxy failed: ${e.message} — falling back to internal balancer`);
+      log.warn({ error: e.message, tag: req.tag }, 'proxy failed — falling back to internal balancer');
       // Fallback на внутрішній балансер якщо проксі недоступний
     }
   }
@@ -328,7 +331,7 @@ export async function ask(req: AIRequest): Promise<AIResponse> {
           prompt: req.prompt, maxTokens: req.maxTokens, json: req.json,
         });
         const provider = `claude:${step.model}`;
-        console.log(`[${tag}] ✅ ${provider} (${Date.now()-start}ms $${res.cost_usd.toFixed(5)}) [${mode}]`);
+        log.info({ provider, latencyMs: Date.now()-start, costUsd: res.cost_usd, mode, tag }, 'claude response');
         logUsage(provider, tag, res.inputTokens, res.outputTokens, res.cost_usd);
         return { text: res.text, provider, cost_usd: res.cost_usd };
       }
@@ -339,13 +342,13 @@ export async function ask(req: AIRequest): Promise<AIResponse> {
         prompt: req.prompt, maxTokens: req.maxTokens, json: req.json,
       });
       const provider = `${step.name}:${res.model}`;
-      console.log(`[${tag}] ✅ ${provider} (${res.latency_ms}ms) [${mode}]`);
+      log.info({ provider, latencyMs: res.latency_ms, mode, tag }, 'provider response');
       logUsage(provider, tag, res.inputTokens, res.outputTokens);
       return { text: res.text, provider, latency_ms: res.latency_ms };
 
     } catch (e: any) {
       errors.push(`${stepKey(step)}: ${e.message}`);
-      console.warn(`[${tag}] ⚠ ${stepKey(step)} failed: ${e.message}`);
+      log.warn({ step: stepKey(step), error: e.message, tag }, 'AI step failed');
     }
   }
 

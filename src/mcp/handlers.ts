@@ -1,4 +1,8 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { createLogger } from '../logger';
+import { validateArgs } from './validation';
+
+const log = createLogger('mcp');
 
 import {
   getChannels, addChannel, getChannel, getNewVideos,
@@ -483,7 +487,18 @@ function err(message: string) {
 // Обработчики инструментов
 // =============================================
 
-export async function handleTool(name: string, args: any): Promise<any> {
+export async function handleTool(name: string, rawArgs: any): Promise<any> {
+  // Валідація вхідних даних через Zod
+  let args: any;
+  try {
+    args = validateArgs(name, rawArgs || {});
+  } catch (e: any) {
+    log.warn({ tool: name, error: e.message }, 'validation failed');
+    return err(e.message);
+  }
+
+  log.info({ tool: name }, 'handling tool call');
+
   switch (name) {
 
     case 'subscribe': {

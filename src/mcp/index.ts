@@ -7,8 +7,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
 import { TOOLS, handleTool } from './handlers.js';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
+
+const log = createLogger('mcp-stdio');
 
 function err(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }, null, 2) }], isError: true };
@@ -33,7 +36,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('✅ YouTube Archive MCP server started (stdio)');
+  log.info('YouTube Archive MCP server started (stdio)');
 }
 
-main().catch(console.error);
+main().catch(e => log.error({ error: e.message }, 'MCP server startup failed'));
