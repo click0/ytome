@@ -369,7 +369,7 @@ export async function askJSON<T>(req: AIRequest): Promise<T | null> {
 // Статус і статистика
 // =============================================
 
-export function getRoutingInfo(): { mode: BalancerMode; routes: Record<TaskComplexity, string[]> } {
+export function getRoutingInfo(): { mode: BalancerMode; proxy: { url?: string; model?: string; status: string }; routes: Record<TaskComplexity, string[]> } {
   const mode         = getMode();
   const complexities: TaskComplexity[] = ['simple', 'medium', 'complex', 'critical'];
   const routes       = {} as Record<TaskComplexity, string[]>;

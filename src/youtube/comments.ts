@@ -59,9 +59,9 @@ export async function fetchTopComments(
     const topComment: FetchedComment = {
       youtube_comment_id: thread.snippet!.topLevelComment!.id!,
       author_name:        top.authorDisplayName || 'Unknown',
-      author_channel_id:  top.authorChannelId?.value,
+      author_channel_id:  top.authorChannelId?.value ?? undefined,
       is_channel_owner:   !!thread.snippet?.canReply === false ? false :
-                          top.authorChannelId?.value === thread.snippet?.videoOwnerChannelId,
+                          top.authorChannelId?.value === (thread.snippet as any)?.videoOwnerChannelId,
       text:               top.textDisplay || '',
       like_count:         top.likeCount || 0,
       reply_count:        thread.snippet?.totalReplyCount || 0,
@@ -74,8 +74,8 @@ export async function fetchTopComments(
       topComment.replies = thread.replies.comments.map(r => ({
         youtube_comment_id: r.id!,
         author_name:        r.snippet?.authorDisplayName || 'Unknown',
-        author_channel_id:  r.snippet?.authorChannelId?.value,
-        is_channel_owner:   r.snippet?.authorChannelId?.value === thread.snippet?.videoOwnerChannelId,
+        author_channel_id:  r.snippet?.authorChannelId?.value ?? undefined,
+        is_channel_owner:   r.snippet?.authorChannelId?.value === (thread.snippet as any)?.videoOwnerChannelId,
         text:               r.snippet?.textDisplay || '',
         like_count:         r.snippet?.likeCount || 0,
         reply_count:        0,

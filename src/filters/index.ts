@@ -232,10 +232,6 @@ function matchRule(rule: FilterRule, video: VideoCandidate): boolean {
     return text === normalized || text === rule.value;
   }
 
-  if (rule.scope === 'content_type') {
-    return text === value;
-  }
-
   // title / description — пошук підрядка
   return text.includes(value);
 }

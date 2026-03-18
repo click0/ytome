@@ -88,11 +88,11 @@ export async function getChannelInfo(channelIdOrHandle: string): Promise<Channel
 
     return {
       youtube_id:       channel.id!,
-      handle:           channel.snippet?.customUrl,
+      handle:           channel.snippet?.customUrl ?? undefined,
       name:             channel.snippet?.title || 'Unknown',
-      description:      channel.snippet?.description,
-      thumbnail_url:    channel.snippet?.thumbnails?.high?.url
-                     || channel.snippet?.thumbnails?.default?.url,
+      description:      channel.snippet?.description ?? undefined,
+      thumbnail_url:    (channel.snippet?.thumbnails?.high?.url
+                     || channel.snippet?.thumbnails?.default?.url) ?? undefined,
       subscriber_count: parseInt(channel.statistics?.subscriberCount || '0'),
       video_count:      parseInt(channel.statistics?.videoCount || '0'),
     };
@@ -154,16 +154,16 @@ export async function getChannelVideos(
       youtube_id:          vid,
       channel_youtube_id:  channelId,
       title:               item.snippet?.title || 'Untitled',
-      description:         details?.snippet?.description,
+      description:         details?.snippet?.description ?? undefined,
       published_at:        item.snippet?.publishedAt || new Date().toISOString(),
       duration_sec:        durationSec ?? undefined,
       type:                isShort ? 'short' : 'video',
       view_count:          parseInt(details?.statistics?.viewCount || '0'),
       like_count:          parseInt(details?.statistics?.likeCount || '0'),
-      thumbnail_url:       item.snippet?.thumbnails?.high?.url
-                        || item.snippet?.thumbnails?.default?.url,
-      tags:                details?.snippet?.tags,
-      language:            details?.snippet?.defaultAudioLanguage,
+      thumbnail_url:       (item.snippet?.thumbnails?.high?.url
+                        || item.snippet?.thumbnails?.default?.url) ?? undefined,
+      tags:                details?.snippet?.tags ?? undefined,
+      language:            details?.snippet?.defaultAudioLanguage ?? undefined,
     };
   });
 
@@ -203,10 +203,11 @@ export async function fetchTranscriptOfflineFirst(
   return fetchTranscript(videoId, lang);
 }
 
-export async function fetchTranscript(videoId: string): Promise<{
+export async function fetchTranscript(videoId: string, _lang?: string): Promise<{
   text: string;
   segments: Array<{ start: number; dur: number; text: string }>;
   language: string;
+  source: string;
 } | null> {
   try {
     // Используем youtube-transcript (не требует API ключа)
@@ -226,6 +227,7 @@ export async function fetchTranscript(videoId: string): Promise<{
         text:  s.text,
       })),
       language: 'auto',
+      source:   'youtube-transcript',
     };
   } catch (err) {
     log.warn({ videoId }, 'youtube-transcript failed, trying yt-dlp fallback');
@@ -233,7 +235,7 @@ export async function fetchTranscript(videoId: string): Promise<{
       const srt = await downloadSubtitles(videoId);
       if (srt) {
         const text = srtToText(srt);
-        return { text, segments: [], language: 'auto' };
+        return { text, segments: [], language: 'auto', source: 'yt-dlp' };
       }
     } catch (e2) {
       log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
