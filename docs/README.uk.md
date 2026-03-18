@@ -31,6 +31,29 @@
 
 > **Примітка:** yt-dlp потрібен лише якщо хочеш завантажувати аудіо/відео на запит. Усі інші функції працюють без нього.
 
+### 1.1 Встановлення Node.js
+
+Якщо Node.js не встановлено:
+
+- **Windows / macOS:** Завантаж інсталятор з [nodejs.org](https://nodejs.org) (рекомендовано LTS). npm входить до складу.
+- **Linux (Ubuntu/Debian):**
+  ```bash
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  ```
+- **Linux (Fedora/RHEL):**
+  ```bash
+  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
+  sudo dnf install -y nodejs
+  ```
+- **Будь-яка ОС через nvm** (рекомендовано для розробників):
+  ```bash
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+  nvm install 22
+  ```
+
+Перевірка: `node -v` (має бути v18+) та `npm -v` (має бути v9+).
+
 ---
 
 ## 2. YouTube API ключ
