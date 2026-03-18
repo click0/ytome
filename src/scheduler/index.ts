@@ -5,8 +5,11 @@ import { getChannelVideos, downloadThumbnail, fetchTranscriptOfflineFirst } from
 import { getVideoCacheStatus } from '../cache/resolver';
 import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
+import { createLogger } from '../logger';
 
 dotenv.config();
+
+const log = createLogger('scheduler');
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */2 * * *';
 const AUTO_THUMBNAILS = process.env.AUTO_DOWNLOAD_THUMBNAILS !== 'false';
@@ -16,7 +19,7 @@ const AUTO_THUMBNAILS = process.env.AUTO_DOWNLOAD_THUMBNAILS !== 'false';
 // =============================================
 
 export async function checkChannel(channel: any): Promise<number> {
-  console.log(`🔍 Checking: ${channel.name} (${channel.youtube_id})`);
+  log.info({ channel: channel.name, id: channel.youtube_id }, 'checking channel');
 
   const since = channel.last_checked_at
     ? new Date(channel.last_checked_at).toISOString()
@@ -31,7 +34,7 @@ export async function checkChannel(channel: any): Promise<number> {
     // Застосовуємо фільтри
     const { allowed, blocked } = filterVideos(videos);
     if (blocked.length > 0) {
-      console.log(`  🚫 Filtered out ${blocked.length} videos from ${channel.name}`);
+      log.info({ channel: channel.name, filtered: blocked.length }, 'videos filtered out');
     }
 
     let newCount = 0;
@@ -49,13 +52,13 @@ export async function checkChannel(channel: any): Promise<number> {
     updateChannelChecked(channel.id);
     logCheck(channel.id, newCount, 'ok');
 
-    console.log(`  ✅ ${newCount} new videos from ${channel.name}`);
+    log.info({ channel: channel.name, newVideos: newCount }, 'channel check complete');
     return newCount;
 
   } catch (err: any) {
     const isQuota = err?.message?.includes('quota');
     logCheck(channel.id, 0, isQuota ? 'quota_exceeded' : 'error', err.message);
-    console.error(`  ❌ Error checking ${channel.name}:`, err.message);
+    log.error({ channel: channel.name, error: err.message }, 'channel check failed');
     return 0;
   }
 }
@@ -67,20 +70,20 @@ export async function checkChannel(channel: any): Promise<number> {
 export async function checkAllChannels(): Promise<void> {
   const quota = getQuotaStatus();
   if (quota.critical) {
-    console.warn(`🔴 Quota critical (${quota.used}/${quota.limit}). Skipping scheduled check.`);
+    log.warn({ used: quota.used, limit: quota.limit }, 'quota critical — skipping scheduled check');
     return;
   }
   if (quota.warning) {
-    console.warn(`🟡 Quota warning: ${quota.used}/${quota.limit} units used (${quota.percent}%)`);
+    log.warn({ used: quota.used, limit: quota.limit, percent: quota.percent }, 'quota warning');
   }
 
   const channels = getChannels();
-  console.log(`\n🚀 Starting check: ${channels.length} channels (quota remaining: ${quota.remaining})`);
+  log.info({ totalChannels: channels.length, quotaRemaining: quota.remaining }, 'starting scheduled check');
 
   let totalNew = 0;
   for (const channel of channels) {
     if (!canAfford('search.list')) {
-      console.warn(`🔴 Quota exhausted mid-run. Stopping after ${totalNew} new videos.`);
+      log.warn({ newVideosSoFar: totalNew }, 'quota exhausted mid-run — stopping');
       break;
     }
     const count = await checkChannel(channel);
@@ -90,7 +93,7 @@ export async function checkAllChannels(): Promise<void> {
     await sleep(1000);
   }
 
-  console.log(`\n✅ Check complete. Total new videos: ${totalNew}`);
+  log.info({ totalNew }, 'scheduled check complete');
 }
 
 // =============================================
@@ -98,15 +101,15 @@ export async function checkAllChannels(): Promise<void> {
 // =============================================
 
 export function startScheduler(): void {
-  console.log(`⏰ Scheduler started. Interval: "${CHECK_INTERVAL}"`);
+  log.info({ interval: CHECK_INTERVAL }, 'scheduler started');
 
   cron.schedule(CHECK_INTERVAL, async () => {
-    console.log(`\n[${new Date().toISOString()}] Running scheduled check...`);
+    log.info('running scheduled check');
     await checkAllChannels();
   });
 
   // Первая проверка сразу при запуске
-  checkAllChannels().catch(console.error);
+  checkAllChannels().catch(e => log.error({ error: e.message }, 'initial check failed'));
 }
 
 function sleep(ms: number): Promise<void> {

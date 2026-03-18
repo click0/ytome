@@ -13,10 +13,14 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { TOOLS, handleTool } from './handlers.js';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
+
+const log = createLogger('http');
 
 const PORT     = parseInt(process.env.MCP_HTTP_PORT || '3000');
 const API_KEY  = process.env.MCP_API_KEY || '';            // опц. захист
@@ -77,6 +81,38 @@ app.use(cors({
 app.use(express.json());
 
 // =============================================
+// Rate Limiting
+// =============================================
+
+const RATE_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000');  // 1 min
+const RATE_MAX       = parseInt(process.env.RATE_LIMIT_MAX || '60');           // 60 req/min
+
+const limiter = rateLimit({
+  windowMs:  RATE_WINDOW_MS,
+  max:       RATE_MAX,
+  standardHeaders: true,   // RateLimit-* headers
+  legacyHeaders:   false,
+  message: { error: `Rate limit exceeded. Max ${RATE_MAX} requests per ${RATE_WINDOW_MS / 1000}s` },
+  keyGenerator: (req: Request) => {
+    // API key або IP як ключ
+    return (req.headers['x-api-key'] as string)
+        || req.headers['authorization']?.replace('Bearer ', '')
+        || req.ip
+        || 'unknown';
+  },
+  handler: (req: Request, res: Response) => {
+    log.warn({ ip: req.ip, path: req.path }, 'rate limit exceeded');
+    res.status(429).json({
+      error: `Rate limit exceeded. Max ${RATE_MAX} requests per ${RATE_WINDOW_MS / 1000}s`,
+    });
+  },
+});
+
+// Застосовуємо rate limit до /messages та /sse (не до /health і /tools)
+app.use('/messages', limiter);
+app.use('/sse', limiter);
+
+// =============================================
 // Middleware: опціональна API key авторизація
 // =============================================
 
@@ -119,7 +155,7 @@ app.get('/tools', (_req: Request, res: Response) => {
 // SSE endpoint — claude.ai підключається сюди
 app.get('/sse', authMiddleware, async (req: Request, res: Response) => {
   const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log(`[SSE] New connection: ${sessionId} from ${req.ip}`);
+  log.info({ sessionId, ip: req.ip }, 'SSE connection opened');
 
   const server    = createMcpServer();
   const transport = new SSEServerTransport(`/messages?sessionId=${sessionId}`, res);
@@ -131,7 +167,7 @@ app.get('/sse', authMiddleware, async (req: Request, res: Response) => {
 
   // Чистимо при відключенні
   req.on('close', () => {
-    console.log(`[SSE] Connection closed: ${sessionId}`);
+    log.info({ sessionId }, 'SSE connection closed');
     sessions.delete(sessionId);
   });
 });
@@ -154,7 +190,7 @@ app.post('/messages', authMiddleware, async (req: Request, res: Response) => {
   try {
     await transport.handlePostMessage(req, res);
   } catch (e: any) {
-    console.error(`[SSE] Message error for ${sessionId}:`, e.message);
+    log.error({ sessionId, error: e.message }, 'SSE message error');
     if (!res.headersSent) {
       res.status(500).json({ error: e.message });
     }
@@ -168,13 +204,17 @@ app.post('/messages', authMiddleware, async (req: Request, res: Response) => {
 app.listen(PORT, HOST, () => {
   const baseUrl = `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`;
 
-  console.log('');
-  console.log('🚀 YouTube Archive MCP — HTTP/SSE server');
-  console.log(`   SSE endpoint:  ${baseUrl}/sse`);
-  console.log(`   Messages:      ${baseUrl}/messages`);
-  console.log(`   Health check:  ${baseUrl}/health`);
-  console.log(`   Tools list:    ${baseUrl}/tools`);
-  console.log('');
+  log.info({
+    transport: 'http+sse',
+    host: HOST,
+    port: PORT,
+    sse:     `${baseUrl}/sse`,
+    messages:`${baseUrl}/messages`,
+    health:  `${baseUrl}/health`,
+    tools:   TOOLS.length,
+    rateLimit: `${RATE_MAX} req / ${RATE_WINDOW_MS / 1000}s`,
+    apiKeyProtection: !!API_KEY,
+  }, 'YouTube Archive MCP — HTTP/SSE server started');
 
   if (HOST === '0.0.0.0') {
     const { networkInterfaces } = require('os');
@@ -182,33 +222,25 @@ app.listen(PORT, HOST, () => {
     for (const name of Object.keys(nets)) {
       for (const net of nets[name]) {
         if (net.family === 'IPv4' && !net.internal) {
-          console.log(`   LAN access:    http://${net.address}:${PORT}/sse`);
+          log.info({ lan: `http://${net.address}:${PORT}/sse` }, 'LAN access available');
         }
       }
     }
   }
 
-  if (API_KEY) {
-    console.log('   🔐 API key protection: enabled');
-  } else {
-    console.log('   ⚠  API key protection: disabled (set MCP_API_KEY in .env)');
-  }
-
-  console.log('');
-  console.log('📋 Claude Desktop Remote config:');
-  console.log(JSON.stringify({
+  log.info({
     mcpServers: {
       'youtube-archive': {
         url: `${baseUrl}/sse`,
         ...(API_KEY ? { headers: { Authorization: `Bearer ${API_KEY}` } } : {}),
       },
     },
-  }, null, 2));
+  }, 'Claude Desktop Remote config');
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('\n[HTTP] Shutting down...');
+  log.info('shutting down');
   sessions.clear();
   process.exit(0);
 });

@@ -148,7 +148,8 @@ export function initDb(): void {
       ('created_at', datetime('now'));
   `);
 
-  console.log(`✅ Database initialized: ${DB_PATH}`);
+  const { createLogger } = require('../logger');
+  createLogger('db').info({ path: DB_PATH }, 'database initialized');
   db.close();
 }
 
