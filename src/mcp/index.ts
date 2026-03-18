@@ -19,7 +19,7 @@ function err(message: string) {
 
 async function main() {
   const server = new Server(
-    { name: 'youtube-archive', version: '1.0.0' },
+    { name: 'ytome', version: '0.75.0' },
     { capabilities: { tools: {} } }
   );
 

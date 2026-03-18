@@ -41,7 +41,7 @@ function err(message: string) {
 
 function createMcpServer(): Server {
   const server = new Server(
-    { name: 'youtube-archive', version: '1.0.0' },
+    { name: 'ytome', version: '0.75.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -138,8 +138,8 @@ function authMiddleware(req: Request, res: Response, next: Function) {
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
-    service: 'youtube-archive-mcp',
-    version: '1.0.0',
+    service: 'ytome-mcp',
+    version: '0.75.0',
     transport: 'http+sse',
     sessions: sessions.size,
     tools: TOOLS.length,
