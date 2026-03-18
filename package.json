@@ -1,5 +1,5 @@
 {
-  "name": "youtube-archive",
+  "name": "ytome",
   "version": "0.1.0",
   "description": "Independent YouTube archive & MCP server for Claude",
   "main": "dist/mcp/index.js",
