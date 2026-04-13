@@ -154,30 +154,31 @@ function buildCostQueue(complexity: TaskComplexity): RouteStep[] {
 // Режим: round-robin (індекс зберігається в SQLite)
 // =============================================
 
-function getRRIndex(): number {
+/** Atomically read current RR index and advance it */
+function getAndAdvanceRRIndex(total: number): number {
+  const db = getDb();
   try {
-    const db  = getDb();
-    const row = db.prepare("SELECT value FROM settings WHERE key='rr_index'").get() as any;
+    // Ensure row exists
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('rr_index', '0')").run();
+    // Atomic read + advance in a single transaction
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'rr_index'").get() as any;
+    const idx = parseInt(row?.value ?? '0', 10) || 0;
+    const next = (idx + 1) % total;
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'rr_index'").run(String(next));
+    return idx;
+  } catch (e: any) {
+    log.warn({ error: e.message }, 'RR index read/advance failed');
+    return 0;
+  } finally {
     db.close();
-    return parseInt(row?.value ?? '0', 10) || 0;
-  } catch { return 0; }
-}
-
-function advanceRRIndex(total: number): void {
-  try {
-    const next = (getRRIndex() + 1) % total;
-    const db   = getDb();
-    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('rr_index',?)").run(String(next));
-    db.close();
-  } catch {}
+  }
 }
 
 function buildRoundRobinQueue(complexity: TaskComplexity): RouteStep[] {
   const eligible = eligibleSteps(complexity);
   if (eligible.length === 0) return [];
 
-  const idx = getRRIndex() % eligible.length;
-  advanceRRIndex(eligible.length);
+  const idx = getAndAdvanceRRIndex(eligible.length);
 
   // Починаємо з поточного індексу, далі по колу — fallback природній
   return [...eligible.slice(idx), ...eligible.slice(0, idx)];
@@ -265,8 +266,8 @@ function buildQueue(complexity: TaskComplexity): RouteStep[] {
 // =============================================
 
 function ensureUsageTable() {
+  const db = getDb();
   try {
-    const db = getDb();
     db.exec(`
       CREATE TABLE IF NOT EXISTS ai_usage_log (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,20 +281,28 @@ function ensureUsageTable() {
       );
       CREATE INDEX IF NOT EXISTS idx_ai_usage_date ON ai_usage_log(date);
     `);
+  } catch (e: any) {
+    log.warn({ error: e.message }, 'failed to ensure ai_usage_log table');
+  } finally {
     db.close();
-  } catch {}
+  }
 }
 
 function logUsage(provider: string, tag: string, input?: number, output?: number, cost?: number) {
   try {
     ensureUsageTable();
     const db = getDb();
-    db.prepare(`
-      INSERT INTO ai_usage_log (date, provider, tag, input_tokens, output_tokens, cost_usd)
-      VALUES (date('now'), ?, ?, ?, ?, ?)
-    `).run(provider, tag || null, input ?? null, output ?? null, cost ?? null);
-    db.close();
-  } catch {}
+    try {
+      db.prepare(`
+        INSERT INTO ai_usage_log (date, provider, tag, input_tokens, output_tokens, cost_usd)
+        VALUES (date('now'), ?, ?, ?, ?, ?)
+      `).run(provider, tag || null, input ?? null, output ?? null, cost ?? null);
+    } finally {
+      db.close();
+    }
+  } catch (e: any) {
+    log.warn({ error: e.message, provider, tag }, 'failed to log AI usage');
+  }
 }
 
 // =============================================
@@ -406,18 +415,23 @@ export function getAIUsageStats(days = 7): Array<{
 }> {
   try {
     ensureUsageTable();
-    const db   = getDb();
-    const rows = db.prepare(`
-      SELECT date, provider, tag,
-        COUNT(*) AS calls,
-        SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS total_tokens,
-        ROUND(SUM(COALESCE(cost_usd,0)),6) AS total_cost_usd
-      FROM ai_usage_log
-      WHERE date >= date('now', ?)
-      GROUP BY date, provider, tag
-      ORDER BY date DESC, total_cost_usd DESC
-    `).all(`-${days} days`) as any[];
-    db.close();
-    return rows;
-  } catch { return []; }
+    const db = getDb();
+    try {
+      return db.prepare(`
+        SELECT date, provider, tag,
+          COUNT(*) AS calls,
+          SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS total_tokens,
+          ROUND(SUM(COALESCE(cost_usd,0)),6) AS total_cost_usd
+        FROM ai_usage_log
+        WHERE date >= date('now', ?)
+        GROUP BY date, provider, tag
+        ORDER BY date DESC, total_cost_usd DESC
+      `).all(`-${days} days`) as any[];
+    } finally {
+      db.close();
+    }
+  } catch (e: any) {
+    log.warn({ error: e.message }, 'failed to get AI usage stats');
+    return [];
+  }
 }

@@ -13,11 +13,14 @@ dotenv.config();
 
 const log = createLogger('youtube');
 
+const API_TIMEOUT = parseInt(process.env.YOUTUBE_API_TIMEOUT || '15000');
+
 // YouTube client без проксі (для googleapis через fetchOptions)
 const youtube = google.youtube({
   version: 'v3',
   auth: process.env.YOUTUBE_API_KEY,
-});
+  timeout: API_TIMEOUT,
+} as any);
 
 /** Повертає youtube-клієнт з або без проксі-агента */
 function getYoutube() {
@@ -26,7 +29,7 @@ function getYoutube() {
   return google.youtube({
     version: 'v3',
     auth: process.env.YOUTUBE_API_KEY,
-    // googleapis передає fetchOptions до node-fetch
+    timeout: API_TIMEOUT,
     fetchOptions: { agent: proxyOpts.agent },
   } as any);
 }

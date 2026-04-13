@@ -36,6 +36,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           tar czf "ytome-${VERSION}.tar.gz" \
             dist/ \
+            docs/ \
             package.json \
             package-lock.json \
             .env.example \

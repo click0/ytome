@@ -601,8 +601,12 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
       // Сохраняем в кеш (если видео есть в БД)
       const db = require('../db/init').getDb();
-      const video = db.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId) as any;
-      db.close();
+      let video: any;
+      try {
+        video = db.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId);
+      } finally {
+        db.close();
+      }
       if (video) {
         saveTranscript(video.id, result.text, result.segments, result.language);
       }
@@ -792,8 +796,13 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'import_opml': {
       const fs = require('fs');
-      if (!fs.existsSync(args.file_path)) return err(`File not found: ${args.file_path}`);
-      const content = fs.readFileSync(args.file_path, 'utf-8');
+      const path = require('path');
+      const resolved = path.resolve(args.file_path);
+      if (!resolved.endsWith('.opml') && !resolved.endsWith('.xml')) {
+        return err('Only .opml and .xml files are allowed');
+      }
+      if (!fs.existsSync(resolved)) return err(`File not found: ${resolved}`);
+      const content = fs.readFileSync(resolved, 'utf-8');
       const channels = parseOPML(content);
       let imported = 0;
       for (const ch of channels) {
@@ -846,9 +855,13 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'evaluate_video': {
-      const db2   = require('../db/init').getDb();
-      const video = db2.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(extractVideoId(args.video_id)) as any;
-      db2.close();
+      const db2 = require('../db/init').getDb();
+      let video: any;
+      try {
+        video = db2.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(extractVideoId(args.video_id));
+      } finally {
+        db2.close();
+      }
       if (!video) return err(`Video ${args.video_id} not found in archive. Run sync first.`);
       const result = await evaluateVideo({
         youtube_id:    video.youtube_id,
@@ -868,9 +881,13 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'evaluate_batch': {
       const db3 = require('../db/init').getDb();
-      const ids  = (args.video_ids as string[]).map(extractVideoId);
-      const rows = ids.map((id: string) => db3.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(id)).filter(Boolean) as any[];
-      db3.close();
+      let rows: any[];
+      try {
+        const ids = (args.video_ids as string[]).map(extractVideoId);
+        rows = ids.map((id: string) => db3.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(id)).filter(Boolean) as any[];
+      } finally {
+        db3.close();
+      }
       if (rows.length === 0) return err('No matching videos found in archive');
       const inputs = rows.map((v: any) => ({
         youtube_id: v.youtube_id, title: v.title, description: v.description,
@@ -892,15 +909,17 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       });
       // Зберігаємо шлях в БД якщо відео є в архіві
       const dbInst = require('../db/init').getDb();
-      const vid = dbInst.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId) as any;
-      dbInst.close();
-      if (vid) {
-        const dbQ = require('../db/queries');
-        if (result.format === 'audio') {
-          require('../db/init').getDb().prepare('UPDATE videos SET audio_path = ? WHERE id = ?').run(result.filePath, vid.id);
-        } else {
-          require('../db/init').getDb().prepare('UPDATE videos SET video_path = ?, is_archived = 1 WHERE id = ?').run(result.filePath, vid.id);
+      try {
+        const vid = dbInst.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId) as any;
+        if (vid) {
+          if (result.format === 'audio') {
+            dbInst.prepare('UPDATE videos SET audio_path = ? WHERE id = ?').run(result.filePath, vid.id);
+          } else {
+            dbInst.prepare('UPDATE videos SET video_path = ?, is_archived = 1 WHERE id = ?').run(result.filePath, vid.id);
+          }
         }
+      } finally {
+        dbInst.close();
       }
       return ok({
         success:   true,

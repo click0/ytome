@@ -35,6 +35,33 @@
 
 > **Note:** yt-dlp is only needed for audio/video downloads. All other features work without it.
 
+### 1.1 Install Node.js
+
+If Node.js is not installed on your system:
+
+- **Windows / macOS:** Download the installer from [nodejs.org](https://nodejs.org) (LTS recommended). npm is included.
+- **Linux (Ubuntu/Debian):**
+  ```bash
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  ```
+- **Linux (Fedora/RHEL):**
+  ```bash
+  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
+  sudo dnf install -y nodejs
+  ```
+- **FreeBSD:**
+  ```bash
+  pkg install node22 npm
+  ```
+- **Any OS via nvm** (recommended for developers):
+  ```bash
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+  nvm install 22
+  ```
+
+Verify: `node -v` (should show v18+) and `npm -v` (should show v9+).
+
 ---
 
 ## 2. YouTube API Key
