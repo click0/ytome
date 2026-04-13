@@ -138,14 +138,20 @@ export async function downloadVideo(
   const args     = buildArgs(videoId, opts);
   const format   = opts.format || 'audio';
 
-  console.log(`⬇  yt-dlp downloading ${videoId} [${format}]${args.includes('--proxy') ? ' via proxy' : ' direct'}...`);
+  const { createLogger } = require('../logger');
+  createLogger('ytdlp').info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
 
   const { stdout, stderr } = await execFileAsync(YTDLP_BIN, args, {
     timeout: 10 * 60 * 1000, // 10 хвилин максимум
   });
 
   // --print after_move:filepath виводить шлях у stdout
-  const filePath = stdout.trim().split('\n').pop()!.trim();
+  const lines = stdout.trim().split('\n');
+  const lastLine = lines[lines.length - 1];
+  if (!lastLine) {
+    throw new Error(`yt-dlp produced no output.\nstderr: ${stderr}`);
+  }
+  const filePath = lastLine.trim();
 
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error(`yt-dlp completed but output file not found.\nstderr: ${stderr}`);
