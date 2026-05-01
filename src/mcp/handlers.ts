@@ -875,6 +875,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         has_captions:  !!video.thumbnail_path,
         caption_type:  'auto',
         tags:          video.tags ? JSON.parse(video.tags) : [],
+        contains_synthetic_media: !!video.contains_synthetic_media,
       });
       return ok(result);
     }

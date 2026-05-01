@@ -31,6 +31,7 @@ export interface VideoEvalInput {
   caption_type?: 'manual' | 'auto' | 'none';
   tags?:         string[];
   category_id?:  string;
+  contains_synthetic_media?: boolean;
 }
 
 export interface EvalScore {
@@ -51,6 +52,8 @@ export interface EvalResult {
   volatility:    VolatilityClass;
   age_days:      number;
   evaluated_at:  string;
+
+  contains_synthetic_media?: boolean;
 
   // AI-поля — заглушки поки що
   ai_summary?:       string;  // TODO: короткий AI-опис
@@ -338,6 +341,7 @@ export async function evaluateVideo(input: VideoEvalInput): Promise<EvalResult> 
   if (quality <= 8)    warnings.push('Низькі показники якості');
   if (input.caption_type === 'manual') reasons.push('Ручні субтитри — краща транскрипція');
   if (!input.has_captions)            warnings.push('Немає субтитрів');
+  if (input.contains_synthetic_media) warnings.push('Відео містить синтетичний/AI-генерований контент');
 
   // AI-поля (stubs)
   const [aiSummary, aiTopics, aiAudience] = await Promise.all([
@@ -353,6 +357,7 @@ export async function evaluateVideo(input: VideoEvalInput): Promise<EvalResult> 
     label,
     reasons,
     warnings,
+    contains_synthetic_media: input.contains_synthetic_media,
     volatility,
     age_days:       ageDays,
     evaluated_at:   new Date().toISOString(),
