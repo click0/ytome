@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
-import { axiosProxyConfig, googleApiProxyConfig, getProxyMode } from '../proxy/manager';
+import { axiosProxyConfig, googleApiProxyConfig, getProxyMode, getNextProxy, buildAgent } from '../proxy/manager';
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
@@ -206,34 +206,50 @@ export async function fetchTranscriptOfflineFirst(
   return fetchTranscript(videoId, lang);
 }
 
-export async function fetchTranscript(videoId: string, _lang?: string): Promise<{
+export async function fetchTranscript(videoId: string, lang?: string): Promise<{
   text: string;
   segments: Array<{ start: number; dur: number; text: string }>;
   language: string;
   source: string;
 } | null> {
   try {
-    // Используем youtube-transcript (не требует API ключа)
-    const { YoutubeTranscript } = await import('youtube-transcript');
-    // youtube-transcript підтримує проксі через axios interceptor
-    const proxyCfg = axiosProxyConfig();
-    const segments = await YoutubeTranscript.fetchTranscript(videoId, {
-      ...(Object.keys(proxyCfg).length ? { httpsAgent: (proxyCfg as any).httpsAgent } : {}),
-    } as any);
+    const { fetchTranscript: fetchYT } = await import('youtube-transcript-plus');
+    const proxy = getNextProxy();
+    const agent = proxy ? buildAgent(proxy) : undefined;
+
+    const segments = await fetchYT(videoId, {
+      lang: lang || undefined,
+      retries: 2,
+      retryDelay: 1000,
+      ...(agent ? {
+        videoFetch: async ({ url }: any) => {
+          const res = await axios.get(url, { httpAgent: agent, httpsAgent: agent, proxy: false });
+          return res.data;
+        },
+        playerFetch: async ({ url, method, body, headers }: any) => {
+          const res = await axios({ url, method, data: body, headers, httpAgent: agent, httpsAgent: agent, proxy: false });
+          return res.data;
+        },
+        transcriptFetch: async ({ url }: any) => {
+          const res = await axios.get(url, { httpAgent: agent, httpsAgent: agent, proxy: false });
+          return res.data;
+        },
+      } : {}),
+    });
 
     const text = segments.map(s => s.text).join(' ');
     return {
       text,
       segments: segments.map(s => ({
-        start: s.offset / 1000,
-        dur:   s.duration / 1000,
+        start: s.offset,
+        dur:   s.duration,
         text:  s.text,
       })),
-      language: 'auto',
-      source:   'youtube-transcript',
+      language: segments[0]?.lang || lang || 'auto',
+      source:   'youtube-transcript-plus',
     };
   } catch (err) {
-    log.warn({ videoId }, 'youtube-transcript failed, trying yt-dlp fallback');
+    log.warn({ videoId }, 'youtube-transcript-plus failed, trying yt-dlp fallback');
     try {
       const srt = await downloadSubtitles(videoId);
       if (srt) {
