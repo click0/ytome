@@ -16,7 +16,7 @@ function ensureExportsDir() {
 /**
  * OPML 2.0 — совместим с:
  * - Feedly, Inoreader, NewsBlur (RSS-ридеры)
- * - Можно импортировать в другой экземпляр youtube-archive
+ * - Можно импортировать в другой экземпляр ytome
  * - YouTube каналы как RSS: https://www.youtube.com/feeds/videos.xml?channel_id=UC...
  */
 export function exportOPML(options: {
@@ -100,7 +100,7 @@ export function exportOPML(options: {
     <title>YouTube Archive — Subscriptions</title>
     <dateCreated>${now}</dateCreated>
     <dateModified>${now}</dateModified>
-    <ownerName>youtube-archive</ownerName>
+    <ownerName>ytome</ownerName>
     <docs>http://opml.org/spec2.opml</docs>
   </head>
   <body>

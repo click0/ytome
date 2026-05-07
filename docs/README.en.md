@@ -69,7 +69,7 @@ The API key is used for fetching video metadata and comments.
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
 2. Click the project dropdown at the top → **New Project**
-3. Name: `youtube-archive` → **Create**
+3. Name: `ytome` → **Create**
 4. Make sure the new project is selected
 
 ### 2.2 Enable YouTube Data API v3
@@ -104,12 +104,12 @@ The API key is used for fetching video metadata and comments.
 
 ### 3.1 Unpack
 
-Extract `youtube-archive-v3.zip` to a convenient location:
+Extract the archive to a convenient location:
 
 ```
-Windows:  C:\Projects\youtube-archive
-Linux:    ~/projects/youtube-archive
-macOS:    ~/Projects/youtube-archive
+Windows:  C:\Projects\ytome
+Linux:    ~/projects/ytome
+macOS:    ~/Projects/ytome
 ```
 
 ### 3.2 Install Dependencies
@@ -117,7 +117,7 @@ macOS:    ~/Projects/youtube-archive
 Open a terminal in the project folder:
 
 ```bash
-cd C:\Projects\youtube-archive
+cd C:\Projects\ytome
 npm install
 ```
 
@@ -142,12 +142,12 @@ Open `.env` in any text editor and fill in:
 YOUTUBE_API_KEY=AIzaSy...your_key_here...
 
 # Windows
-STORAGE_PATH=C:\Projects\youtube-archive\storage
-DB_PATH=C:\Projects\youtube-archive\storage\archive.db
+STORAGE_PATH=C:\Projects\ytome\storage
+DB_PATH=C:\Projects\ytome\storage\archive.db
 
 # Linux / macOS
-STORAGE_PATH=/home/yourname/projects/youtube-archive/storage
-DB_PATH=/home/yourname/projects/youtube-archive/storage/archive.db
+STORAGE_PATH=/home/yourname/projects/ytome/storage
+DB_PATH=/home/yourname/projects/ytome/storage/archive.db
 ```
 
 ### 3.4 Initialize the Database
@@ -183,15 +183,15 @@ If the file doesn't exist — create it. Paste the following content:
 ```json
 {
   "mcpServers": {
-    "youtube-archive": {
+    "ytome": {
       "command": "node",
       "args": [
-        "C:\\Projects\\youtube-archive\\dist\\mcp\\index.js"
+        "C:\\Projects\\ytome\\dist\\mcp\\index.js"
       ],
       "env": {
         "YOUTUBE_API_KEY": "your_api_key",
-        "STORAGE_PATH": "C:\\Projects\\youtube-archive\\storage",
-        "DB_PATH": "C:\\Projects\\youtube-archive\\storage\\archive.db"
+        "STORAGE_PATH": "C:\\Projects\\ytome\\storage",
+        "DB_PATH": "C:\\Projects\\ytome\\storage\\archive.db"
       }
     }
   }
@@ -205,13 +205,13 @@ If the file doesn't exist — create it. Paste the following content:
 ```json
 {
   "mcpServers": {
-    "youtube-archive": {
+    "ytome": {
       "command": "node",
-      "args": ["/home/yourname/projects/youtube-archive/dist/mcp/index.js"],
+      "args": ["/home/yourname/projects/ytome/dist/mcp/index.js"],
       "env": {
         "YOUTUBE_API_KEY": "your_api_key",
-        "STORAGE_PATH": "/home/yourname/projects/youtube-archive/storage",
-        "DB_PATH": "/home/yourname/projects/youtube-archive/storage/archive.db"
+        "STORAGE_PATH": "/home/yourname/projects/ytome/storage",
+        "DB_PATH": "/home/yourname/projects/ytome/storage/archive.db"
       }
     }
   }
@@ -226,7 +226,7 @@ Fully close and reopen Claude Desktop. To verify the connection, in a new chat a
 "Show my YouTube subscriptions"
 ```
 
-If the server is connected, Claude will see the `youtube-archive` tools and respond (with an empty list for now).
+If the server is connected, Claude will see the `ytome` tools and respond (with an empty list for now).
 
 ---
 
@@ -323,7 +323,7 @@ If the server is connected, Claude will see the `youtube-archive` tools and resp
 ## 7. Project Structure
 
 ```
-youtube-archive/
+ytome/
 ├── src/
 │   ├── db/
 │   │   ├── init.ts           # SQLite schema
@@ -363,4 +363,4 @@ npm run db:init     # Initialize database
 
 ---
 
-*youtube-archive v0.2 · MIT License*
+*ytome v0.75 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
