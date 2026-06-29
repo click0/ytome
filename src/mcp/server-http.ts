@@ -230,7 +230,7 @@ app.listen(PORT, HOST, () => {
 
   log.info({
     mcpServers: {
-      'youtube-archive': {
+      'ytome': {
         url: `${baseUrl}/sse`,
         ...(API_KEY ? { headers: { Authorization: `Bearer ${API_KEY}` } } : {}),
       },
