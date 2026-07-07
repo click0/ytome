@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
-import { axiosProxyConfig, googleApiProxyConfig, getProxyMode, getNextProxy, buildAgent } from '../proxy/manager';
+import { axiosProxyConfig, googleApiProxyConfig, getNextProxy, buildAgent } from '../proxy/manager';
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
@@ -23,7 +23,7 @@ const youtube = google.youtube({
 } as any);
 
 /** Повертає youtube-клієнт з або без проксі-агента */
-async function getYoutube() {
+export async function getYoutube() {
   const proxyOpts = await googleApiProxyConfig();
   if (!proxyOpts.agent) return youtube;
   return google.youtube({
@@ -71,7 +71,7 @@ export interface VideoInfo {
 
 export async function getChannelInfo(channelIdOrHandle: string): Promise<ChannelInfo | null> {
   try {
-    // Поддержка @handle и UCxxx
+    const yt = await getYoutube();
     const params: youtube_v3.Params$Resource$Channels$List = {
       part: ['snippet', 'statistics'],
       maxResults: 1,
@@ -85,7 +85,7 @@ export async function getChannelInfo(channelIdOrHandle: string): Promise<Channel
       params.forHandle = channelIdOrHandle;
     }
 
-    const res = await (await getYoutube()).channels.list(params);
+    const res = await yt.channels.list(params);
     const channel = res.data.items?.[0];
     if (!channel) return null;
 
@@ -119,9 +119,10 @@ export async function getChannelVideos(
 ): Promise<{ videos: VideoInfo[]; nextPageToken?: string }> {
 
   const { maxResults = 50, publishedAfter, pageToken } = options;
+  const yt = await getYoutube();
 
   assertQuota('search.list');
-  const searchRes = await (await getYoutube()).search.list({
+  const searchRes = await yt.search.list({
     part: ['id', 'snippet'],
     channelId,
     type: ['video'],
@@ -138,7 +139,7 @@ export async function getChannelVideos(
   // Получаем детали (duration и т.д.) одним запросом
   const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
   if (videoIds.length > 0) trackQuota('videos.list', channelId, videoIds.length);
-  const detailsRes = await (await getYoutube()).videos.list({
+  const detailsRes = await yt.videos.list({
     part: ['snippet', 'contentDetails', 'statistics'],
     id: videoIds,
   });

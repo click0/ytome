@@ -15,8 +15,12 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { TOOLS, handleTool } from './handlers.js';
 import { createLogger } from '../logger.js';
+
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')).version;
 
 dotenv.config();
 
@@ -41,7 +45,7 @@ function err(message: string) {
 
 function createMcpServer(): Server {
   const server = new Server(
-    { name: 'ytome', version: '0.80.0' },
+    { name: 'ytome', version: PKG_VERSION },
     { capabilities: { tools: {} } }
   );
 
@@ -139,7 +143,7 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'ytome-mcp',
-    version: '0.80.0',
+    version: PKG_VERSION,
     transport: 'http+sse',
     sessions: sessions.size,
     tools: TOOLS.length,

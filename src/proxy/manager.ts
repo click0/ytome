@@ -1,4 +1,4 @@
-import { getDb } from '../db/init.js';
+import { getDb } from '../db/init';
 
 // =============================================
 // Типи

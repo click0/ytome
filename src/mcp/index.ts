@@ -6,8 +6,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { TOOLS, handleTool } from './handlers.js';
 import { createLogger } from '../logger.js';
+
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')).version;
 
 dotenv.config();
 
@@ -19,7 +23,7 @@ function err(message: string) {
 
 async function main() {
   const server = new Server(
-    { name: 'ytome', version: '0.80.0' },
+    { name: 'ytome', version: PKG_VERSION },
     { capabilities: { tools: {} } }
   );
 

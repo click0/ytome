@@ -1,18 +1,8 @@
-import { google } from 'googleapis';
 import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
-import { googleApiProxyConfig } from '../proxy/manager';
+import { getYoutube } from './api';
 
 dotenv.config();
-
-async function getYoutube() {
-  const p = await googleApiProxyConfig();
-  return google.youtube({
-    version: 'v3',
-    auth: process.env.YOUTUBE_API_KEY,
-    ...(p.agent ? { fetchOptions: { agent: p.agent } } : {}),
-  } as any);
-}
 
 export interface FetchedComment {
   youtube_comment_id: string;
@@ -41,7 +31,8 @@ export async function fetchTopComments(
 
   // Шаг 1: получаем top-level комментарии отсортированные по relevance
   assertQuota('commentThreads.list');
-  const res = await (await getYoutube()).commentThreads.list({
+  const yt = await getYoutube();
+  const res = await yt.commentThreads.list({
     part: ['snippet', 'replies'],
     videoId,
     order: 'relevance',
