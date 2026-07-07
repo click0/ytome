@@ -53,7 +53,6 @@ export function createQuotaTable(): void {
       updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  db.close();
 }
 
 // =============================================
@@ -84,7 +83,6 @@ export function trackQuota(
       updated_at = CURRENT_TIMESTAMP
   `).run(today, cost);
 
-  db.close();
   return cost;
 }
 
@@ -108,7 +106,6 @@ export function getQuotaStatus(): {
     'SELECT total_used FROM quota_daily WHERE date = ?'
   ).get(today) as any;
 
-  db.close();
 
   const used      = row?.total_used ?? 0;
   const remaining = Math.max(0, DAILY_QUOTA_LIMIT - used);
@@ -161,7 +158,6 @@ export function getQuotaHistory(days = 7): Array<{
     WHERE date >= date('now', ?)
     ORDER BY date DESC
   `).all(`-${days} days`) as any[];
-  db.close();
 
   return rows.map(r => ({
     date:       r.date,
@@ -189,7 +185,6 @@ export function getQuotaBreakdown(date?: string): Array<{
     ORDER BY total_units DESC
   `).all(day) as any[];
 
-  db.close();
   return rows;
 }
 

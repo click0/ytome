@@ -8,7 +8,6 @@ export function migrate004(): void {
 
   const db = getDb();
   db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '4')`).run();
-  db.close();
 
   console.log('✅ Migration 004 applied: proxies + filter_rules');
 }

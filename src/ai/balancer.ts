@@ -156,11 +156,9 @@ function buildCostQueue(complexity: TaskComplexity): RouteStep[] {
 
 /** Atomically read current RR index and advance it */
 function getAndAdvanceRRIndex(total: number): number {
-  const db = getDb();
   try {
-    // Ensure row exists
+    const db = getDb();
     db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('rr_index', '0')").run();
-    // Atomic read + advance in a single transaction
     const row = db.prepare("SELECT value FROM settings WHERE key = 'rr_index'").get() as any;
     const idx = parseInt(row?.value ?? '0', 10) || 0;
     const next = (idx + 1) % total;
@@ -169,8 +167,6 @@ function getAndAdvanceRRIndex(total: number): number {
   } catch (e: any) {
     log.warn({ error: e.message }, 'RR index read/advance failed');
     return 0;
-  } finally {
-    db.close();
   }
 }
 
@@ -284,7 +280,6 @@ function ensureUsageTable() {
   } catch (e: any) {
     log.warn({ error: e.message }, 'failed to ensure ai_usage_log table');
   } finally {
-    db.close();
   }
 }
 
@@ -298,7 +293,6 @@ function logUsage(provider: string, tag: string, input?: number, output?: number
         VALUES (date('now'), ?, ?, ?, ?, ?)
       `).run(provider, tag || null, input ?? null, output ?? null, cost ?? null);
     } finally {
-      db.close();
     }
   } catch (e: any) {
     log.warn({ error: e.message, provider, tag }, 'failed to log AI usage');
@@ -428,7 +422,6 @@ export function getAIUsageStats(days = 7): Array<{
         ORDER BY date DESC, total_cost_usd DESC
       `).all(`-${days} days`) as any[];
     } finally {
-      db.close();
     }
   } catch (e: any) {
     log.warn({ error: e.message }, 'failed to get AI usage stats');

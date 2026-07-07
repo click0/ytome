@@ -7,31 +7,41 @@ dotenv.config();
 
 const DB_PATH = process.env.DB_PATH || './storage/archive.db';
 
-// Убедиться что директория существует
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
+let _db: Database.Database | null = null;
+
 export function getDb(): Database.Database {
-  return new Database(DB_PATH);
+  if (!_db) {
+    _db = new Database(DB_PATH);
+    _db.pragma('journal_mode = WAL');
+    _db.pragma('foreign_keys = ON');
+  }
+  return _db;
+}
+
+export function closeDb(): void {
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
 }
 
 export function initDb(): void {
   const db = getDb();
 
   db.exec(`
-    -- =============================================
-    -- КАНАЛЫ (подписки)
-    -- =============================================
     CREATE TABLE IF NOT EXISTS channels (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      youtube_id      TEXT    NOT NULL UNIQUE,  -- UCxxxxxx...
-      handle          TEXT,                      -- @handle
+      youtube_id      TEXT    NOT NULL UNIQUE,
+      handle          TEXT,
       name            TEXT    NOT NULL,
       description     TEXT,
       thumbnail_url   TEXT,
-      thumbnail_path  TEXT,                      -- локальный путь
+      thumbnail_path  TEXT,
       visibility      TEXT    NOT NULL DEFAULT 'private'
                               CHECK(visibility IN ('private', 'public')),
       subscriber_count INTEGER,
@@ -39,16 +49,13 @@ export function initDb(): void {
       added_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_checked_at DATETIME,
       last_video_at   DATETIME,
-      notes           TEXT,                      -- личные заметки
-      tags            TEXT                       -- JSON массив тегов
+      notes           TEXT,
+      tags            TEXT
     );
 
-    -- =============================================
-    -- ВИДЕО
-    -- =============================================
     CREATE TABLE IF NOT EXISTS videos (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      youtube_id      TEXT    NOT NULL UNIQUE,  -- dQw4w9WgXcQ
+      youtube_id      TEXT    NOT NULL UNIQUE,
       channel_id      INTEGER NOT NULL REFERENCES channels(id),
       title           TEXT    NOT NULL,
       description     TEXT,
@@ -59,45 +66,31 @@ export function initDb(): void {
       view_count      INTEGER,
       like_count      INTEGER,
       comment_count   INTEGER,
-
-      -- Статусы
-      is_available    BOOLEAN NOT NULL DEFAULT 1,  -- доступно на YT
-      is_seen         BOOLEAN NOT NULL DEFAULT 0,  -- просмотрено тобой
-      is_archived     BOOLEAN NOT NULL DEFAULT 0,  -- есть локальная копия
-
-      -- Локальные файлы
+      is_available    BOOLEAN NOT NULL DEFAULT 1,
+      is_seen         BOOLEAN NOT NULL DEFAULT 0,
+      is_archived     BOOLEAN NOT NULL DEFAULT 0,
       thumbnail_url   TEXT,
       thumbnail_path  TEXT,
       audio_path      TEXT,
       video_path      TEXT,
-
-      -- Метаданные
-      tags            TEXT,    -- JSON массив
+      tags            TEXT,
       category_id     TEXT,
       language        TEXT,
-      
-      -- Системное
       fetched_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- =============================================
-    -- ТРАНСКРИПЦИИ
-    -- =============================================
     CREATE TABLE IF NOT EXISTS transcripts (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       video_id    INTEGER NOT NULL UNIQUE REFERENCES videos(id),
       language    TEXT    NOT NULL DEFAULT 'auto',
-      text        TEXT    NOT NULL,          -- полный текст
-      segments    TEXT,                      -- JSON: [{start, dur, text}]
+      text        TEXT    NOT NULL,
+      segments    TEXT,
       source      TEXT    NOT NULL DEFAULT 'youtube'
                           CHECK(source IN ('youtube', 'whisper', 'manual')),
       fetched_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- =============================================
-    -- ГРУППЫ КАНАЛОВ (плейлисты подписок)
-    -- =============================================
     CREATE TABLE IF NOT EXISTS channel_groups (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    NOT NULL,
@@ -113,9 +106,6 @@ export function initDb(): void {
       PRIMARY KEY (group_id, channel_id)
     );
 
-    -- =============================================
-    -- ИСТОРИЯ ПРОВЕРОК
-    -- =============================================
     CREATE TABLE IF NOT EXISTS check_log (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       channel_id    INTEGER REFERENCES channels(id),
@@ -126,18 +116,12 @@ export function initDb(): void {
       error_message TEXT
     );
 
-    -- =============================================
-    -- ИНДЕКСЫ
-    -- =============================================
     CREATE INDEX IF NOT EXISTS idx_videos_channel    ON videos(channel_id);
     CREATE INDEX IF NOT EXISTS idx_videos_published  ON videos(published_at DESC);
     CREATE INDEX IF NOT EXISTS idx_videos_type       ON videos(type);
     CREATE INDEX IF NOT EXISTS idx_videos_seen       ON videos(is_seen);
     CREATE INDEX IF NOT EXISTS idx_channels_visibility ON channels(visibility);
 
-    -- =============================================
-    -- НАСТРОЙКИ (key-value)
-    -- =============================================
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -150,10 +134,11 @@ export function initDb(): void {
 
   const { createLogger } = require('../logger');
   createLogger('db').info({ path: DB_PATH }, 'database initialized');
-  db.close();
 }
 
-// Запуск напрямую: node dist/db/init.js
+process.on('exit', () => closeDb());
+
 if (require.main === module) {
   initDb();
+  closeDb();
 }

@@ -61,7 +61,6 @@ export function createProxyTable(): void {
     -- Глобальний режим роботи проксі
     INSERT OR IGNORE INTO settings (key, value) VALUES ('proxy_mode', 'disabled');
   `);
-  db.close();
 }
 
 // =============================================
@@ -94,40 +93,34 @@ export function addProxy(input: {
     input.enabled !== false ? 1 : 0,
   ) as any;
 
-  db.close();
   return rowToProxy(row);
 }
 
 export function removeProxy(id: number): void {
   const db = getDb();
   db.prepare('DELETE FROM proxies WHERE id = ?').run(id);
-  db.close();
 }
 
 export function setProxyEnabled(id: number, enabled: boolean): void {
   const db = getDb();
   db.prepare('UPDATE proxies SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
-  db.close();
 }
 
 export function listProxies(): ProxyConfig[] {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM proxies ORDER BY id').all() as any[];
-  db.close();
   return rows.map(rowToProxy);
 }
 
 export function getProxyMode(): ProxyMode {
   const db = getDb();
   const row = db.prepare("SELECT value FROM settings WHERE key = 'proxy_mode'").get() as any;
-  db.close();
   return (row?.value as ProxyMode) || 'disabled';
 }
 
 export function setProxyMode(mode: ProxyMode): void {
   const db = getDb();
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('proxy_mode', ?)").run(mode);
-  db.close();
 }
 
 // =============================================
@@ -142,7 +135,6 @@ export function getNextProxy(): ProxyConfig | null {
   const healthy = db.prepare(
     'SELECT * FROM proxies WHERE enabled = 1 AND healthy = 1 ORDER BY id'
   ).all() as any[];
-  db.close();
 
   if (healthy.length === 0) return null;
 
@@ -247,7 +239,6 @@ export async function checkAllProxies(): Promise<Array<{
 function markUsed(id: number) {
   const db = getDb();
   db.prepare('UPDATE proxies SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
-  db.close();
 }
 
 function markHealthy(id: number, ok: boolean, error?: string) {
@@ -260,7 +251,6 @@ function markHealthy(id: number, ok: boolean, error?: string) {
       last_error    = ?
     WHERE id = ?
   `).run(ok ? 1 : 0, ok ? 1 : 0, error || null, id);
-  db.close();
 }
 
 function parseProxyUrl(raw: string): {
