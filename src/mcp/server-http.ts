@@ -41,7 +41,7 @@ function err(message: string) {
 
 function createMcpServer(): Server {
   const server = new Server(
-    { name: 'ytome', version: '0.75.0' },
+    { name: 'ytome', version: '0.80.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -139,7 +139,7 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'ytome-mcp',
-    version: '0.75.0',
+    version: '0.80.0',
     transport: 'http+sse',
     sessions: sessions.size,
     tools: TOOLS.length,

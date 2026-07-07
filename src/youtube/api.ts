@@ -23,8 +23,8 @@ const youtube = google.youtube({
 } as any);
 
 /** Повертає youtube-клієнт з або без проксі-агента */
-function getYoutube() {
-  const proxyOpts = googleApiProxyConfig();
+async function getYoutube() {
+  const proxyOpts = await googleApiProxyConfig();
   if (!proxyOpts.agent) return youtube;
   return google.youtube({
     version: 'v3',
@@ -85,7 +85,7 @@ export async function getChannelInfo(channelIdOrHandle: string): Promise<Channel
       params.forHandle = channelIdOrHandle;
     }
 
-    const res = await getYoutube().channels.list(params);
+    const res = await (await getYoutube()).channels.list(params);
     const channel = res.data.items?.[0];
     if (!channel) return null;
 
@@ -121,7 +121,7 @@ export async function getChannelVideos(
   const { maxResults = 50, publishedAfter, pageToken } = options;
 
   assertQuota('search.list');
-  const searchRes = await getYoutube().search.list({
+  const searchRes = await (await getYoutube()).search.list({
     part: ['id', 'snippet'],
     channelId,
     type: ['video'],
@@ -138,7 +138,7 @@ export async function getChannelVideos(
   // Получаем детали (duration и т.д.) одним запросом
   const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
   if (videoIds.length > 0) trackQuota('videos.list', channelId, videoIds.length);
-  const detailsRes = await getYoutube().videos.list({
+  const detailsRes = await (await getYoutube()).videos.list({
     part: ['snippet', 'contentDetails', 'statistics'],
     id: videoIds,
   });
@@ -215,7 +215,7 @@ export async function fetchTranscript(videoId: string, lang?: string): Promise<{
   try {
     const { fetchTranscript: fetchYT } = await import('youtube-transcript-plus');
     const proxy = getNextProxy();
-    const agent = proxy ? buildAgent(proxy) : undefined;
+    const agent = proxy ? await buildAgent(proxy) : undefined;
 
     const segments = await fetchYT(videoId, {
       lang: lang || undefined,
@@ -237,10 +237,10 @@ export async function fetchTranscript(videoId: string, lang?: string): Promise<{
       } : {}),
     });
 
-    const text = segments.map(s => s.text).join(' ');
+    const text = segments.map((s: any) => s.text).join(' ');
     return {
       text,
-      segments: segments.map(s => ({
+      segments: segments.map((s: any) => ({
         start: s.offset,
         dur:   s.duration,
         text:  s.text,
@@ -278,7 +278,7 @@ export async function downloadThumbnail(
     const filePath = path.join(dir, `${videoId}.jpg`);
     if (fs.existsSync(filePath)) return filePath;
 
-    const res = await axios.get(url, { responseType: 'stream', ...axiosProxyConfig() });
+    const res = await axios.get(url, { responseType: 'stream', ...(await axiosProxyConfig()) });
     const writer = fs.createWriteStream(filePath);
     res.data.pipe(writer);
 

@@ -1,6 +1,4 @@
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import { SocksProxyAgent } from 'socks-proxy-agent';
-import { getDb } from '../db/init';
+import { getDb } from '../db/init.js';
 
 // =============================================
 // Типи
@@ -163,12 +161,14 @@ export function getNextProxy(): ProxyConfig | null {
 // Створення HTTP-агента для axios / googleapis
 // =============================================
 
-export function buildAgent(proxy: ProxyConfig | null): any {
+export async function buildAgent(proxy: ProxyConfig | null): Promise<any> {
   if (!proxy) return undefined;
 
   if (proxy.protocol === 'socks5') {
+    const { SocksProxyAgent } = await import('socks-proxy-agent');
     return new SocksProxyAgent(proxy.url);
   }
+  const { HttpsProxyAgent } = await import('https-proxy-agent');
   return new HttpsProxyAgent(proxy.url);
 }
 
@@ -176,29 +176,28 @@ export function buildAgent(proxy: ProxyConfig | null): any {
  * Повертає конфіг для axios з проксі-агентом.
  * Використовувати як: axios.get(url, axiosProxyConfig())
  */
-export function axiosProxyConfig(): object {
+export async function axiosProxyConfig(): Promise<object> {
   const proxy = getNextProxy();
   if (!proxy) return {};
 
-  const agent = buildAgent(proxy);
+  const agent = await buildAgent(proxy);
   markUsed(proxy.id);
 
   return {
     httpAgent:  agent,
     httpsAgent: agent,
-    proxy:      false,   // вимикаємо вбудований axios-proxy, бо використовуємо agent
+    proxy:      false,
   };
 }
 
 /**
  * Конфіг для googleapis (передається як httpOptions).
- * googleapis використовує google-auth-library, який приймає fetchImplementation.
  */
-export function googleApiProxyConfig(): { agent?: any } {
+export async function googleApiProxyConfig(): Promise<{ agent?: any }> {
   const proxy = getNextProxy();
   if (!proxy) return {};
   markUsed(proxy.id);
-  return { agent: buildAgent(proxy) };
+  return { agent: await buildAgent(proxy) };
 }
 
 // =============================================
@@ -210,7 +209,7 @@ export async function checkProxyHealth(
   testUrl = 'https://www.youtube.com/robots.txt'
 ): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
   const axios = (await import('axios')).default;
-  const agent = buildAgent(proxy);
+  const agent = await buildAgent(proxy);
   const start = Date.now();
 
   try {

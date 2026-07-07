@@ -19,7 +19,7 @@ function err(message: string) {
 
 async function main() {
   const server = new Server(
-    { name: 'ytome', version: '0.75.0' },
+    { name: 'ytome', version: '0.80.0' },
     { capabilities: { tools: {} } }
   );
 

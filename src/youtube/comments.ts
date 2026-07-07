@@ -5,8 +5,8 @@ import { googleApiProxyConfig } from '../proxy/manager';
 
 dotenv.config();
 
-function getYoutube() {
-  const p = googleApiProxyConfig();
+async function getYoutube() {
+  const p = await googleApiProxyConfig();
   return google.youtube({
     version: 'v3',
     auth: process.env.YOUTUBE_API_KEY,
@@ -41,7 +41,7 @@ export async function fetchTopComments(
 
   // Шаг 1: получаем top-level комментарии отсортированные по relevance
   assertQuota('commentThreads.list');
-  const res = await getYoutube().commentThreads.list({
+  const res = await (await getYoutube()).commentThreads.list({
     part: ['snippet', 'replies'],
     videoId,
     order: 'relevance',

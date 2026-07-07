@@ -122,7 +122,7 @@ export async function askProvider(req: ProviderRequest): Promise<ProviderRespons
   const resp = await axios.post(url, body, {
     headers,
     timeout: 30_000,
-    ...axiosProxyConfig(),
+    ...(await axiosProxyConfig()),
   });
 
   const latency_ms = Date.now() - start;
