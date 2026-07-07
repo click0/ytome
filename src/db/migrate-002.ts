@@ -57,7 +57,6 @@ export function migrate002(): void {
   `);
 
   console.log('✅ Migration 002 applied: watch_later + comments');
-  db.close();
 }
 
 if (require.main === module) {

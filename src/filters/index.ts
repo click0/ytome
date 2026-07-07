@@ -56,7 +56,6 @@ export function createFilterTable(): void {
     CREATE INDEX IF NOT EXISTS idx_filter_type  ON filter_rules(type);
     CREATE INDEX IF NOT EXISTS idx_filter_scope ON filter_rules(scope);
   `);
-  db.close();
 }
 
 // =============================================
@@ -86,20 +85,17 @@ export function addFilterRule(input: {
     input.caseSensitive ? 1 : 0,
     input.note || null,
   ) as any;
-  db.close();
   return rowToRule(row);
 }
 
 export function removeFilterRule(id: number): void {
   const db = getDb();
   db.prepare('DELETE FROM filter_rules WHERE id = ?').run(id);
-  db.close();
 }
 
 export function setFilterEnabled(id: number, enabled: boolean): void {
   const db = getDb();
   db.prepare('UPDATE filter_rules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
-  db.close();
 }
 
 export function listFilterRules(opts: {
@@ -116,7 +112,6 @@ export function listFilterRules(opts: {
   sql += ' ORDER BY type, scope, value';
 
   const rows = db.prepare(sql).all(...params) as any[];
-  db.close();
   return rows.map(rowToRule);
 }
 
@@ -125,7 +120,6 @@ export function clearFilterRules(type?: FilterType): void {
   type
     ? db.prepare('DELETE FROM filter_rules WHERE type = ?').run(type)
     : db.prepare('DELETE FROM filter_rules').run();
-  db.close();
 }
 
 // =============================================
@@ -146,7 +140,6 @@ export function applyFilters(video: VideoCandidate): FilterResult {
   const rules = db.prepare(
     'SELECT * FROM filter_rules WHERE enabled = 1 ORDER BY type, scope'
   ).all() as any[];
-  db.close();
 
   if (rules.length === 0) return { allowed: true };
 
@@ -246,7 +239,6 @@ function getField(video: VideoCandidate, scope: FilterScope): string {
 function incrementHit(id: number) {
   const db = getDb();
   db.prepare('UPDATE filter_rules SET hit_count = hit_count + 1 WHERE id = ?').run(id);
-  db.close();
 }
 
 function rowToRule(r: any): FilterRule {

@@ -56,7 +56,6 @@ export interface VideoMeta {
 export function getVideoMeta(youtubeId: string): CacheResult<VideoMeta> {
   const db  = getDb();
   const row = db.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(youtubeId) as any;
-  db.close();
 
   if (!row) return { data: null, source: 'not_found' };
 
@@ -90,7 +89,7 @@ export function getTranscriptCached(youtubeId: string, lang?: string): CacheResu
 
   // Спочатку шукаємо відео
   const video = db.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(youtubeId) as any;
-  if (!video) { db.close(); return { data: null, source: 'not_found' }; }
+  if (!video) return { data: null, source: 'not_found' };
 
   // Шукаємо транскрипцію — спочатку ручну, потім auto, потім будь-яку мовою
   let row: any = null;
@@ -107,7 +106,6 @@ export function getTranscriptCached(youtubeId: string, lang?: string): CacheResu
     ).get(video.id);
   }
 
-  db.close();
 
   if (!row) return { data: null, source: 'not_found' };
   return { data: row as TranscriptData, source: 'local_db' };
@@ -130,7 +128,7 @@ export function getCommentsCached(
   const db = getDb();
 
   const video = db.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(youtubeId) as any;
-  if (!video) { db.close(); return { data: null, source: 'not_found' }; }
+  if (!video) return { data: null, source: 'not_found' };
 
   let sql    = 'SELECT * FROM comments WHERE video_id = ?';
   const args: any[] = [video.id];
@@ -146,7 +144,6 @@ export function getCommentsCached(
     "SELECT MAX(created_at) as last FROM comments WHERE video_id = ?"
   ).get(video.id) as any;
 
-  db.close();
 
   if (comments.length === 0) return { data: null, source: 'not_found' };
 
@@ -171,7 +168,6 @@ export function getThumbnailCached(youtubeId: string): CacheResult<string> {
   const video = db.prepare(
     'SELECT thumbnail_path FROM videos WHERE youtube_id = ?'
   ).get(youtubeId) as any;
-  db.close();
 
   if (video?.thumbnail_path && fs.existsSync(video.thumbnail_path)) {
     return { data: video.thumbnail_path, source: 'local_file' };
@@ -196,7 +192,6 @@ export function getMediaCached(youtubeId: string, type: MediaType): CacheResult<
   const db    = getDb();
   const col   = type === 'audio' ? 'audio_path' : 'video_path';
   const video = db.prepare(`SELECT ${col} FROM videos WHERE youtube_id = ?`).get(youtubeId) as any;
-  db.close();
 
   const storedPath = video?.[col];
   if (storedPath && fs.existsSync(storedPath)) {

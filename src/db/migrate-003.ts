@@ -6,7 +6,6 @@ export function migrate003(): void {
 
   const db = getDb();
   db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '3')`).run();
-  db.close();
 
   console.log('✅ Migration 003 applied: quota_log + quota_daily');
 }
