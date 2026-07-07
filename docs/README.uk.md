@@ -363,4 +363,4 @@ npm run db:init      # Ініціалізація бази даних
 
 ---
 
-*ytome v0.75 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.80 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*

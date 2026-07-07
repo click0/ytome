@@ -5,7 +5,7 @@
 **Stack:** TypeScript / Node.js · SQLite · YouTube Data API v3  
 **Platforms:** Windows · Linux · macOS  
 **Author:** Vladyslav V. Prodan · [github.com/click0](https://github.com/click0)  
-**License:** BSD 3-Clause · v0.75 · 2026
+**License:** BSD 3-Clause · v0.80 · 2026
 
 ---
 
@@ -382,4 +382,4 @@ npm run db:init        # Initialize database
 
 ---
 
-*ytome v0.75 · [github.com/click0/ytome](https://github.com/click0/ytome) · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.80 · [github.com/click0/ytome](https://github.com/click0/ytome) · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
