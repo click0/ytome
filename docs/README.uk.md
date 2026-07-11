@@ -280,6 +280,42 @@ Linux:    ~/.config/Claude/claude_desktop_config.json
 | `create_group` | Створити групу каналів (`name`, `visibility`) |
 | `list_groups` | Список усіх груп |
 
+### Профілі (кілька Google-акаунтів)
+
+| Інструмент | Опис |
+|------------|------|
+| `profile_add` | Додати профіль: cookies.txt + опційний власний API key |
+| `profile_list` | Список профілів |
+| `profile_remove` | Видалити профіль (канали відв'язуються) |
+| `profile_set_default` | Профіль за замовчуванням |
+| `profile_assign_channel` | Прив'язати канал до профілю |
+
+Експорт cookies.txt через браузерне розширення або `yt-dlp --cookies-from-browser chrome --cookies out.txt`.
+
+### Google Drive / Sheets (Service Account)
+
+| Інструмент | Опис |
+|------------|------|
+| `drive_backup` | Бекап archive.db на Google Drive |
+| `drive_export_transcript` | Експорт транскрипту як .txt на Drive |
+| `drive_list` | Список файлів бекапів |
+| `export_subscriptions_sheets` | Підписки → Google Sheets |
+| `export_watch_later_sheets` | Watch later → Google Sheets |
+| `export_stats_sheets` | Статистика квоти → Google Sheets |
+| `sheets_list` | Список експортованих таблиць |
+
+Потрібен `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` у `.env` (див. `.env.example`).
+
+### YouTube Music
+
+| Інструмент | Опис |
+|------------|------|
+| `music_playlist_add` | Архівувати плейлист (URL або ID). ~1 од. квоти / 50 треків |
+| `music_playlist_list` | Список архівованих плейлистів |
+| `music_playlist_tracks` | Треки з фільтром по артисту |
+| `music_playlist_sync` | Пересинхронізація (зниклі треки → unavailable) |
+| `music_playlist_remove` | Видалити архівований плейлист |
+
 ---
 
 ## 6. Приклади використання
@@ -363,4 +399,4 @@ npm run db:init      # Ініціалізація бази даних
 
 ---
 
-*ytome v0.80 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.85 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*

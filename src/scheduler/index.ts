@@ -5,6 +5,7 @@ import { getChannelVideos, downloadThumbnail, fetchTranscriptOfflineFirst } from
 import { getVideoCacheStatus } from '../cache/resolver';
 import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
+import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { createLogger } from '../logger';
 
 dotenv.config();
@@ -25,10 +26,15 @@ export async function checkChannel(channel: any): Promise<number> {
     ? new Date(channel.last_checked_at).toISOString()
     : undefined;
 
+  // Профіль каналу: власний API key = окрема квота
+  const profile = resolveProfileForChannel(channel.youtube_id);
+  if (profile) markProfileUsed(profile.id);
+
   try {
     const { videos } = await getChannelVideos(channel.youtube_id, {
       publishedAfter: since,
       maxResults: 50,
+      apiKey: profile?.youtube_api_key ?? undefined,
     });
 
     // Застосовуємо фільтри

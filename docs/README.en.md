@@ -280,6 +280,42 @@ If the server is connected, Claude will see the `ytome` tools and respond (with 
 | `create_group` | Create a channel group (`name`, `visibility`) |
 | `list_groups` | List all groups |
 
+### Profiles (multiple Google accounts)
+
+| Tool | Description |
+|------|-------------|
+| `profile_add` | Add a profile: cookies.txt + optional own API key |
+| `profile_list` | List profiles |
+| `profile_remove` | Remove a profile (channels are unlinked) |
+| `profile_set_default` | Set the default profile |
+| `profile_assign_channel` | Bind a channel to a profile |
+
+Export cookies.txt via a browser extension or `yt-dlp --cookies-from-browser chrome --cookies out.txt`.
+
+### Google Drive / Sheets (Service Account)
+
+| Tool | Description |
+|------|-------------|
+| `drive_backup` | Backup archive.db to Google Drive |
+| `drive_export_transcript` | Export a transcript as .txt to Drive |
+| `drive_list` | List backup files |
+| `export_subscriptions_sheets` | Subscriptions → Google Sheets |
+| `export_watch_later_sheets` | Watch later → Google Sheets |
+| `export_stats_sheets` | Quota stats → Google Sheets |
+| `sheets_list` | List exported spreadsheets |
+
+Requires `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` in `.env` (see `.env.example`).
+
+### YouTube Music
+
+| Tool | Description |
+|------|-------------|
+| `music_playlist_add` | Archive a playlist (URL or ID). ~1 quota unit / 50 tracks |
+| `music_playlist_list` | List archived playlists |
+| `music_playlist_tracks` | Tracks with artist filter |
+| `music_playlist_sync` | Re-sync (vanished tracks marked unavailable) |
+| `music_playlist_remove` | Remove an archived playlist |
+
 ---
 
 ## 6. Usage Examples
@@ -363,4 +399,4 @@ npm run db:init     # Initialize database
 
 ---
 
-*ytome v0.80 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.85 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
