@@ -28,7 +28,8 @@ npm test
 
 SQLite singleton via `getDb()` from `src/db/init.ts`. Never call `db.close()` manually — the connection is closed automatically on process exit.
 
-Migrations: `src/db/migrate-002.ts` through `migrate-004.ts`.
+Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
+(005: profiles + music tables, 006: sheet_exports).
 
 ## Key conventions
 
@@ -41,7 +42,7 @@ Migrations: `src/db/migrate-002.ts` through `migrate-004.ts`.
 ## Testing
 
 ```bash
-npm test          # vitest run (70 tests)
+npm test          # vitest run (87 tests)
 npm run test:watch
 ```
 

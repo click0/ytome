@@ -22,15 +22,18 @@ const youtube = google.youtube({
   timeout: API_TIMEOUT,
 } as any);
 
-/** Повертає youtube-клієнт з або без проксі-агента */
-export async function getYoutube() {
+/**
+ * Повертає youtube-клієнт з або без проксі-агента.
+ * apiKey — власний ключ профілю (ізоляція квоти); пусто = глобальний з .env
+ */
+export async function getYoutube(apiKey?: string) {
   const proxyOpts = await googleApiProxyConfig();
-  if (!proxyOpts.agent) return youtube;
+  if (!proxyOpts.agent && !apiKey) return youtube;
   return google.youtube({
     version: 'v3',
-    auth: process.env.YOUTUBE_API_KEY,
+    auth: apiKey || process.env.YOUTUBE_API_KEY,
     timeout: API_TIMEOUT,
-    fetchOptions: { agent: proxyOpts.agent },
+    ...(proxyOpts.agent ? { fetchOptions: { agent: proxyOpts.agent } } : {}),
   } as any);
 }
 
@@ -115,11 +118,12 @@ export async function getChannelVideos(
     maxResults?: number;
     publishedAfter?: string;  // ISO 8601
     pageToken?: string;
+    apiKey?: string;          // власний ключ профілю
   } = {}
 ): Promise<{ videos: VideoInfo[]; nextPageToken?: string }> {
 
   const { maxResults = 50, publishedAfter, pageToken } = options;
-  const yt = await getYoutube();
+  const yt = await getYoutube(options.apiKey);
 
   assertQuota('search.list');
   const searchRes = await yt.search.list({

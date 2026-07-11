@@ -647,6 +647,26 @@ function extractVideoId(input: string): string {
   return urlMatch ? urlMatch[1] : input;
 }
 
+/**
+ * Опції транскрипту/завантаження з профілю каналу відео:
+ * cookieHeader для youtube-transcript-plus, cookiePath для yt-dlp.
+ */
+function profileOptsForVideo(videoYoutubeId: string): { cookieHeader?: string; cookiePath?: string } {
+  const row = require('../db/init').getDb().prepare(`
+    SELECT c.youtube_id AS channel_youtube_id FROM videos v
+    JOIN channels c ON c.id = v.channel_id WHERE v.youtube_id = ?
+  `).get(videoYoutubeId) as any;
+
+  const profile = resolveProfileForChannel(row?.channel_youtube_id ?? '');
+  if (!profile) return {};
+
+  const cookieHeader = getProfileCookieHeader(profile);
+  return {
+    cookieHeader: cookieHeader || undefined,
+    cookiePath: profile.cookie_path ?? undefined,
+  };
+}
+
 function buildBar(percent: number): string {
   const filled = Math.round(percent / 5);
   const empty  = 20 - filled;
@@ -779,8 +799,8 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         }
       }
 
-      // Загружаем
-      const result = await fetchTranscript(videoId);
+      // Загружаем (з cookies профілю якщо канал прив'язаний)
+      const result = await fetchTranscript(videoId, args.language, profileOptsForVideo(videoId));
       if (!result) return err(`No transcript available for ${videoId}`);
 
       const video = require('../db/init').getDb()
@@ -805,7 +825,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       if (cached) {
         text = cached.text;
       } else {
-        const result = await fetchTranscript(videoId);
+        const result = await fetchTranscript(videoId, undefined, profileOptsForVideo(videoId));
         if (!result) return err(`No transcript available for ${videoId}`);
         text = result.text;
       }
@@ -1072,9 +1092,10 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     case 'download': {
       const videoId = extractVideoId(args.video_id);
       const result  = await downloadVideo(videoId, {
-        format:    args.format || 'audio',
-        subtitles: args.subtitles,
-        lang:      args.lang,
+        format:     args.format || 'audio',
+        subtitles:  args.subtitles,
+        lang:       args.lang,
+        cookiePath: profileOptsForVideo(videoId).cookiePath,
       });
       // Зберігаємо шлях в БД якщо відео є в архіві
       const dbInst = require('../db/init').getDb();

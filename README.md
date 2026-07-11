@@ -5,7 +5,7 @@
 **Stack:** TypeScript / Node.js · SQLite · YouTube Data API v3  
 **Platforms:** Windows · Linux · macOS  
 **Author:** Vladyslav V. Prodan · [github.com/click0](https://github.com/click0)  
-**License:** BSD 3-Clause · v0.80 · 2026
+**License:** BSD 3-Clause · v0.85 · 2026
 
 ---
 
@@ -152,6 +152,8 @@ node dist/db/init.js
 node dist/db/migrate-002.js
 node dist/db/migrate-003.js
 node dist/db/migrate-004.js
+node dist/db/migrate-005.js
+node dist/db/migrate-006.js
 ```
 
 > After successful execution, `storage/archive.db` will be created — this file **is** your archive.
@@ -295,6 +297,46 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 | `create_group` / `list_groups` | Channel groups |
 | `quota_status` | YouTube API quota for today with history |
 
+### Profiles (multiple Google accounts)
+| Tool | Description |
+|------|-------------|
+| `profile_add` | Add a profile: cookies.txt (Netscape format) + optional own API key (quota isolation) |
+| `profile_list` | List profiles |
+| `profile_remove` | Remove a profile (channels are unlinked, not deleted) |
+| `profile_set_default` | Set the default profile |
+| `profile_assign_channel` | Bind a channel to a profile |
+
+> Export cookies.txt with a browser extension (e.g. "Get cookies.txt LOCALLY") or
+> `yt-dlp --cookies-from-browser chrome --cookies out.txt`. Cookies enable
+> private/age-restricted video access in transcripts and downloads.
+
+### Google Drive (Service Account)
+| Tool | Description |
+|------|-------------|
+| `drive_backup` | Backup archive.db to Drive (WAL-safe snapshot) |
+| `drive_export_transcript` | Export a transcript as .txt to Drive |
+| `drive_list` | List files in the backup folder |
+
+### Google Sheets
+| Tool | Description |
+|------|-------------|
+| `export_subscriptions_sheets` | Subscriptions → spreadsheet (re-export updates the same sheet) |
+| `export_watch_later_sheets` | Watch later list → spreadsheet |
+| `export_stats_sheets` | API quota stats → spreadsheet |
+| `sheets_list` | List previously exported spreadsheets |
+
+> Drive & Sheets share one Service Account: set `GOOGLE_SERVICE_ACCOUNT_KEY_FILE`
+> in `.env` and share the target Drive folder with the service account email.
+
+### YouTube Music
+| Tool | Description |
+|------|-------------|
+| `music_playlist_add` | Archive a playlist (music.youtube.com URL or ID). ~1 quota unit / 50 tracks |
+| `music_playlist_list` | List archived playlists |
+| `music_playlist_tracks` | Tracks with artist filter |
+| `music_playlist_sync` | Re-sync: new tracks added, vanished ones marked unavailable (never deleted) |
+| `music_playlist_remove` | Remove an archived playlist |
+
 ---
 
 ## 6. Usage Examples
@@ -319,6 +361,13 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 "Add SOCKS5 proxy 192.168.1.1:1080 and set rotation mode"
 "Blacklist channels with 'shorts' in description"
 "Export my public subscriptions to OPML"
+
+"Add a profile 'Work' with cookies from ~/work-cookies.txt"
+"Assign @corporate-channel to the Work profile"
+"Backup the archive to Google Drive"
+"Export my subscriptions to Google Sheets"
+"Archive this YouTube Music playlist: [music.youtube.com URL]"
+"Show tracks by Daft Punk in my archived playlists"
 ```
 
 ---
@@ -382,4 +431,4 @@ npm run db:init        # Initialize database
 
 ---
 
-*ytome v0.80 · [github.com/click0/ytome](https://github.com/click0/ytome) · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.85 · [github.com/click0/ytome](https://github.com/click0/ytome) · BSD 3-Clause License · Vladyslav V. Prodan · 2026*

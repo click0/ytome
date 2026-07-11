@@ -1,6 +1,6 @@
 {
   "name": "ytome",
-  "version": "0.80.0",
+  "version": "0.85.0",
   "description": "Independent YouTube archive & MCP server for Claude",
   "main": "dist/mcp/index.js",
   "scripts": {
