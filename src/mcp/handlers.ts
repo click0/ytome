@@ -26,6 +26,12 @@ import { checkAllProviders } from '../ai/providers';
 import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp } from '../youtube/ytdlp';
 import { addFilterRule, removeFilterRule, setFilterEnabled, listFilterRules, clearFilterRules } from '../filters/index';
 import { getQuotaStatus, getQuotaHistory, getQuotaBreakdown, QUOTA_COSTS } from '../db/quota';
+import { addProfile, removeProfile, listProfiles, setDefaultProfile, assignChannelProfile, resolveProfileForChannel, getProfileCookieHeader } from '../profiles/manager';
+import { googleAuthAvailable } from '../google/auth';
+import { backupDatabase, exportTranscriptToDrive, listDriveFiles } from '../google/drive';
+import { exportSubscriptionsToSheet, exportWatchLaterToSheet, exportStatsToSheet, listSheetExports } from '../google/sheets';
+import { extractPlaylistId, fetchPlaylistInfo, fetchPlaylistTracks } from '../youtube/music';
+import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlaylist, saveMusicTracks, getMusicTracks } from '../db/queries-music';
 
 
 // =============================================
@@ -442,6 +448,184 @@ export const TOOLS: Tool[] = [
     name: 'list_groups',
     description: 'Показать список групп каналов',
     inputSchema: { type: 'object', properties: {} },
+  },
+
+  // ----------- Профілі (браузерні сесії / Google-акаунти) -----------
+  {
+    name: 'profile_add',
+    description: 'Додати профіль (Google-акаунт): cookies.txt для приватних відео + опційний власний API key',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name:            { type: 'string', description: 'Назва профілю ("Personal", "Work")' },
+        youtube_api_key: { type: 'string', description: 'Власний YouTube API key (окрема квота). Пусто = глобальний' },
+        cookie_path:     { type: 'string', description: 'Шлях до cookies.txt (Netscape format, експорт з браузера)' },
+        notes:           { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'profile_list',
+    description: 'Список профілів',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'profile_remove',
+    description: 'Видалити профіль (канали відв\'язуються, не видаляються)',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'number' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'profile_set_default',
+    description: 'Встановити профіль за замовчуванням',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'number' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'profile_assign_channel',
+    description: 'Прив\'язати канал до профілю (null = глобальні налаштування)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel:    { type: 'string', description: 'channel ID або @handle' },
+        profile_id: { type: ['number', 'null'] },
+      },
+      required: ['channel', 'profile_id'],
+    },
+  },
+
+  // ----------- Google Drive -----------
+  {
+    name: 'drive_backup',
+    description: 'Бекап archive.db на Google Drive (потрібен Service Account, див. GOOGLE_SERVICE_ACCOUNT_KEY_FILE)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: { type: 'string', description: 'Drive folder ID. Пусто = GOOGLE_DRIVE_FOLDER_ID з .env' },
+      },
+    },
+  },
+  {
+    name: 'drive_export_transcript',
+    description: 'Експортувати транскрипт відео як .txt на Google Drive',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_id:  { type: 'string' },
+        folder_id: { type: 'string' },
+      },
+      required: ['video_id'],
+    },
+  },
+  {
+    name: 'drive_list',
+    description: 'Список файлів у папці бекапів на Google Drive',
+    inputSchema: {
+      type: 'object',
+      properties: { folder_id: { type: 'string' } },
+    },
+  },
+
+  // ----------- Google Sheets -----------
+  {
+    name: 'export_subscriptions_sheets',
+    description: 'Експорт підписок у Google Sheets (створює або оновлює таблицю)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        visibility:     { type: 'string', enum: ['all', 'private', 'public'], default: 'all' },
+        spreadsheet_id: { type: 'string', description: 'ID існуючої таблиці для оновлення' },
+      },
+    },
+  },
+  {
+    name: 'export_watch_later_sheets',
+    description: 'Експорт watch later у Google Sheets',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status:         { type: 'string', enum: ['pending', 'done', 'skipped', 'all'], default: 'all' },
+        spreadsheet_id: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'export_stats_sheets',
+    description: 'Експорт статистики квоти API у Google Sheets',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days:           { type: 'number', default: 30 },
+        spreadsheet_id: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'sheets_list',
+    description: 'Список експортованих Google Sheets таблиць',
+    inputSchema: { type: 'object', properties: {} },
+  },
+
+  // ----------- YouTube Music -----------
+  {
+    name: 'music_playlist_add',
+    description: 'Архівувати YouTube Music плейлист (URL music.youtube.com або playlist ID). Квота: ~1 од./50 треків',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        playlist:   { type: 'string', description: 'URL або playlist ID (PLxxx, OLAKxxx)' },
+        visibility: { type: 'string', enum: ['private', 'public'], default: 'private' },
+      },
+      required: ['playlist'],
+    },
+  },
+  {
+    name: 'music_playlist_list',
+    description: 'Список архівованих музичних плейлистів',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        visibility: { type: 'string', enum: ['all', 'private', 'public'], default: 'all' },
+      },
+    },
+  },
+  {
+    name: 'music_playlist_tracks',
+    description: 'Треки архівованого плейлиста (з фільтром по артисту)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        playlist:            { type: 'string' },
+        artist:              { type: 'string', description: 'Фільтр по артисту (підрядок)' },
+        include_unavailable: { type: 'boolean', description: 'Показати видалені з плейлиста треки' },
+      },
+      required: ['playlist'],
+    },
+  },
+  {
+    name: 'music_playlist_sync',
+    description: 'Пересинхронізувати плейлист: нові треки додаються, зниклі позначаються unavailable',
+    inputSchema: {
+      type: 'object',
+      properties: { playlist: { type: 'string' } },
+      required: ['playlist'],
+    },
+  },
+  {
+    name: 'music_playlist_remove',
+    description: 'Видалити архівований плейлист разом із треками',
+    inputSchema: {
+      type: 'object',
+      properties: { playlist: { type: 'string' } },
+      required: ['playlist'],
+    },
   },
 ];
 
@@ -1041,6 +1225,187 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'list_groups': {
       return ok({ groups: getGroups() });
+    }
+
+    // ----------- Профілі -----------
+
+    case 'profile_add': {
+      const profile = addProfile({
+        name:          args.name,
+        youtubeApiKey: args.youtube_api_key,
+        cookiePath:    args.cookie_path,
+        notes:         args.notes,
+      });
+      return ok({ success: true, profile });
+    }
+
+    case 'profile_list': {
+      const profiles = listProfiles();
+      return ok({
+        total: profiles.length,
+        profiles: profiles.map(p => ({
+          id: p.id,
+          name: p.name,
+          has_api_key: !!p.youtube_api_key,
+          has_cookies: !!p.cookie_path,
+          is_default: p.is_default,
+          enabled: p.enabled,
+          last_used: p.last_used_at,
+          notes: p.notes,
+        })),
+      });
+    }
+
+    case 'profile_remove': {
+      removeProfile(args.id);
+      return ok({ success: true });
+    }
+
+    case 'profile_set_default': {
+      setDefaultProfile(args.id);
+      return ok({ success: true, default_profile_id: args.id });
+    }
+
+    case 'profile_assign_channel': {
+      const channel = getChannel(args.channel) || getChannels().find(
+        (c: any) => c.handle === args.channel
+      );
+      if (!channel) return err(`Channel not found: ${args.channel}`);
+      assignChannelProfile(channel.youtube_id, args.profile_id);
+      return ok({ success: true, channel: channel.name, profile_id: args.profile_id });
+    }
+
+    // ----------- Google Drive -----------
+
+    case 'drive_backup': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env (see .env.example)');
+      }
+      const result = await backupDatabase(args.folder_id);
+      return ok({ success: true, ...result });
+    }
+
+    case 'drive_export_transcript': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env');
+      }
+      const result = await exportTranscriptToDrive(extractVideoId(args.video_id), args.folder_id);
+      return ok({ success: true, ...result });
+    }
+
+    case 'drive_list': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env');
+      }
+      const files = await listDriveFiles(args.folder_id);
+      return ok({ total: files.length, files });
+    }
+
+    // ----------- Google Sheets -----------
+
+    case 'export_subscriptions_sheets': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env');
+      }
+      const vis = args.visibility === 'all' ? undefined : args.visibility;
+      const result = await exportSubscriptionsToSheet({ visibility: vis, spreadsheetId: args.spreadsheet_id });
+      return ok({ success: true, ...result });
+    }
+
+    case 'export_watch_later_sheets': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env');
+      }
+      const result = await exportWatchLaterToSheet({ status: args.status, spreadsheetId: args.spreadsheet_id });
+      return ok({ success: true, ...result });
+    }
+
+    case 'export_stats_sheets': {
+      if (!googleAuthAvailable()) {
+        return err('Google Service Account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env');
+      }
+      const result = await exportStatsToSheet({ days: args.days, spreadsheetId: args.spreadsheet_id });
+      return ok({ success: true, ...result });
+    }
+
+    case 'sheets_list': {
+      return ok({ exports: listSheetExports() });
+    }
+
+    // ----------- YouTube Music -----------
+
+    case 'music_playlist_add': {
+      const playlistId = extractPlaylistId(args.playlist);
+      const info = await fetchPlaylistInfo(playlistId);
+      if (!info) return err(`Playlist not found or not public: ${playlistId}`);
+
+      info.source_url = args.playlist.startsWith('http') ? args.playlist : undefined;
+      const dbId = addMusicPlaylist(info, args.visibility || 'private');
+      const tracks = await fetchPlaylistTracks(playlistId);
+      const { saved } = saveMusicTracks(dbId, tracks);
+
+      return ok({
+        success: true,
+        playlist: info.title,
+        playlist_id: playlistId,
+        tracks_archived: saved,
+      });
+    }
+
+    case 'music_playlist_list': {
+      const vis = args.visibility === 'all' ? undefined : args.visibility;
+      const playlists = getMusicPlaylists(vis);
+      return ok({
+        total: playlists.length,
+        playlists: playlists.map((p: any) => ({
+          playlist_id: p.playlist_id,
+          title: p.title,
+          track_count: p.track_count,
+          visibility: p.visibility,
+          last_synced: p.last_synced_at,
+          url: `https://music.youtube.com/playlist?list=${p.playlist_id}`,
+        })),
+      });
+    }
+
+    case 'music_playlist_tracks': {
+      const playlistId = extractPlaylistId(args.playlist);
+      const pl = getMusicPlaylist(playlistId);
+      if (!pl) return err(`Playlist not archived: ${playlistId}. Use music_playlist_add first.`);
+
+      const tracks = getMusicTracks(pl.id, {
+        artist: args.artist,
+        includeUnavailable: args.include_unavailable,
+      });
+      return ok({
+        playlist: pl.title,
+        total: tracks.length,
+        tracks: tracks.map((t: any) => ({
+          position: t.position,
+          title: t.title,
+          artist: t.artist,
+          duration_sec: t.duration_sec,
+          available: !!t.is_available,
+          url: `https://music.youtube.com/watch?v=${t.video_youtube_id}`,
+        })),
+      });
+    }
+
+    case 'music_playlist_sync': {
+      const playlistId = extractPlaylistId(args.playlist);
+      const pl = getMusicPlaylist(playlistId);
+      if (!pl) return err(`Playlist not archived: ${playlistId}. Use music_playlist_add first.`);
+
+      const tracks = await fetchPlaylistTracks(playlistId);
+      const { saved, removed } = saveMusicTracks(pl.id, tracks);
+      return ok({ success: true, playlist: pl.title, tracks_synced: saved, tracks_removed: removed });
+    }
+
+    case 'music_playlist_remove': {
+      const playlistId = extractPlaylistId(args.playlist);
+      const removed = removeMusicPlaylist(playlistId);
+      if (!removed) return err(`Playlist not found: ${playlistId}`);
+      return ok({ success: true, playlist_id: playlistId });
     }
 
     default:

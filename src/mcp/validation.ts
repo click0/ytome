@@ -244,6 +244,97 @@ export const quotaStatusSchema = z.object({
 });
 
 // =============================================
+// Профілі
+// =============================================
+
+export const profileAddSchema = z.object({
+  name:            z.string().min(1, 'name is required'),
+  youtube_api_key: z.string().optional(),
+  cookie_path:     z.string().optional(),
+  notes:           z.string().optional(),
+});
+
+export const profileListSchema = z.object({});
+
+export const profileRemoveSchema = z.object({
+  id: z.number().int().positive('id must be a positive integer'),
+});
+
+export const profileSetDefaultSchema = z.object({
+  id: z.number().int().positive('id must be a positive integer'),
+});
+
+export const profileAssignChannelSchema = z.object({
+  channel:    z.string().min(1, 'channel is required'),
+  profile_id: z.number().int().positive().nullable(),
+});
+
+// =============================================
+// Google Drive
+// =============================================
+
+export const driveBackupSchema = z.object({
+  folder_id: z.string().optional(),
+});
+
+export const driveExportTranscriptSchema = z.object({
+  video_id:  z.string().min(1, 'video_id is required'),
+  folder_id: z.string().optional(),
+});
+
+export const driveListSchema = z.object({
+  folder_id: z.string().optional(),
+});
+
+// =============================================
+// Google Sheets
+// =============================================
+
+export const sheetsExportSubscriptionsSchema = z.object({
+  visibility:     z.enum(['all', 'private', 'public']).optional(),
+  spreadsheet_id: z.string().optional(),
+});
+
+export const sheetsExportWatchLaterSchema = z.object({
+  status:         z.enum(['pending', 'done', 'skipped', 'all']).optional(),
+  spreadsheet_id: z.string().optional(),
+});
+
+export const sheetsExportStatsSchema = z.object({
+  days:           z.number().int().min(1).max(365).optional(),
+  spreadsheet_id: z.string().optional(),
+});
+
+export const sheetsListSchema = z.object({});
+
+// =============================================
+// YouTube Music
+// =============================================
+
+export const musicPlaylistAddSchema = z.object({
+  playlist:   z.string().min(1, 'playlist URL or ID is required'),
+  visibility: z.enum(['private', 'public']).optional(),
+});
+
+export const musicPlaylistListSchema = z.object({
+  visibility: z.enum(['all', 'private', 'public']).optional(),
+});
+
+export const musicPlaylistTracksSchema = z.object({
+  playlist:            z.string().min(1, 'playlist URL or ID is required'),
+  artist:              z.string().optional(),
+  include_unavailable: z.boolean().optional(),
+});
+
+export const musicPlaylistSyncSchema = z.object({
+  playlist: z.string().min(1, 'playlist URL or ID is required'),
+});
+
+export const musicPlaylistRemoveSchema = z.object({
+  playlist: z.string().min(1, 'playlist URL or ID is required'),
+});
+
+// =============================================
 // Маппінг: tool name → schema
 // =============================================
 
@@ -283,6 +374,27 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   filter_remove:      filterRemoveSchema,
   filter_clear:       filterClearSchema,
   quota_status:       quotaStatusSchema,
+
+  profile_add:            profileAddSchema,
+  profile_list:           profileListSchema,
+  profile_remove:         profileRemoveSchema,
+  profile_set_default:    profileSetDefaultSchema,
+  profile_assign_channel: profileAssignChannelSchema,
+
+  drive_backup:            driveBackupSchema,
+  drive_export_transcript: driveExportTranscriptSchema,
+  drive_list:              driveListSchema,
+
+  export_subscriptions_sheets: sheetsExportSubscriptionsSchema,
+  export_watch_later_sheets:   sheetsExportWatchLaterSchema,
+  export_stats_sheets:         sheetsExportStatsSchema,
+  sheets_list:                 sheetsListSchema,
+
+  music_playlist_add:    musicPlaylistAddSchema,
+  music_playlist_list:   musicPlaylistListSchema,
+  music_playlist_tracks: musicPlaylistTracksSchema,
+  music_playlist_sync:   musicPlaylistSyncSchema,
+  music_playlist_remove: musicPlaylistRemoveSchema,
 };
 
 /**
