@@ -188,7 +188,8 @@ export async function getChannelVideos(
 export async function fetchTranscriptOfflineFirst(
   videoId: string,
   lang?: string,
-  forceRefresh = false
+  forceRefresh = false,
+  opts: TranscriptFetchOptions = {}
 ): Promise<{ text: string; segments: any[]; language: string; source: string } | null> {
   if (!forceRefresh) {
     const cached = getTranscriptCached(videoId, lang);
@@ -204,10 +205,19 @@ export async function fetchTranscriptOfflineFirst(
       };
     }
   }
-  return fetchTranscript(videoId, lang);
+  return fetchTranscript(videoId, lang, opts);
 }
 
-export async function fetchTranscript(videoId: string, lang?: string): Promise<{
+export interface TranscriptFetchOptions {
+  cookieHeader?: string;   // Cookie-заголовок профілю (для приватних/age-restricted відео)
+  cookiePath?: string;     // шлях до cookies.txt (для yt-dlp fallback)
+}
+
+export async function fetchTranscript(
+  videoId: string,
+  lang?: string,
+  opts: TranscriptFetchOptions = {}
+): Promise<{
   text: string;
   segments: Array<{ start: number; dur: number; text: string }>;
   language: string;
@@ -218,21 +228,26 @@ export async function fetchTranscript(videoId: string, lang?: string): Promise<{
     const proxy = getNextProxy();
     const agent = proxy ? await buildAgent(proxy) : undefined;
 
+    // Спільний axios-конфіг: проксі-агент + Cookie профілю
+    const axiosBase: any = agent ? { httpAgent: agent, httpsAgent: agent, proxy: false } : {};
+    const cookieHeaders = opts.cookieHeader ? { Cookie: opts.cookieHeader } : {};
+    const useCustomFetch = !!agent || !!opts.cookieHeader;
+
     const segments = await fetchYT(videoId, {
       lang: lang || undefined,
       retries: 2,
       retryDelay: 1000,
-      ...(agent ? {
+      ...(useCustomFetch ? {
         videoFetch: async ({ url }: any) => {
-          const res = await axios.get(url, { httpAgent: agent, httpsAgent: agent, proxy: false });
+          const res = await axios.get(url, { ...axiosBase, headers: cookieHeaders });
           return res.data;
         },
         playerFetch: async ({ url, method, body, headers }: any) => {
-          const res = await axios({ url, method, data: body, headers, httpAgent: agent, httpsAgent: agent, proxy: false });
+          const res = await axios({ url, method, data: body, headers: { ...headers, ...cookieHeaders }, ...axiosBase });
           return res.data;
         },
         transcriptFetch: async ({ url }: any) => {
-          const res = await axios.get(url, { httpAgent: agent, httpsAgent: agent, proxy: false });
+          const res = await axios.get(url, { ...axiosBase, headers: cookieHeaders });
           return res.data;
         },
       } : {}),
@@ -252,7 +267,7 @@ export async function fetchTranscript(videoId: string, lang?: string): Promise<{
   } catch (err) {
     log.warn({ videoId }, 'youtube-transcript-plus failed, trying yt-dlp fallback');
     try {
-      const srt = await downloadSubtitles(videoId);
+      const srt = await downloadSubtitles(videoId, lang || 'en', opts.cookiePath);
       if (srt) {
         const text = srtToText(srt);
         return { text, segments: [], language: 'auto', source: 'yt-dlp' };
