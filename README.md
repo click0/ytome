@@ -95,6 +95,7 @@ The API key is used for fetching video metadata and comments.
 | Comments (50 per request) | 1 |
 | Channel info | 1 |
 | Transcripts (subtitles) | **0** — fetched directly, no API key needed |
+| New-video check per channel | **~1** — via free RSS feed + `videos.list` (first sync uses `search.list`, 100) |
 
 ---
 
@@ -336,6 +337,17 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 | `music_playlist_tracks` | Tracks with artist filter |
 | `music_playlist_sync` | Re-sync: new tracks added, vanished ones marked unavailable (never deleted) |
 | `music_playlist_remove` | Remove an archived playlist |
+
+### Media library (Jellyfin / Emby / Plex)
+| Tool | Description |
+|------|-------------|
+| `library_export` | Export downloaded videos as `Channel/Season YYYY/` with `.nfo` metadata and posters. Files are hardlinks — no extra disk space. Incremental and idempotent |
+| `library_rebuild` | Rebuild from scratch (cleans up after renames/deletions). Requires `confirm: true`; originals in `storage/media` are never touched |
+
+> Point a Jellyfin/Emby **Shows** library (or Plex with the XBMCnfo agent) at
+> `MEDIA_LIBRARY_PATH` (default `storage/library`). Channel = show, publish year = season,
+> episode = `MMDD` + daily index (e.g. `S2026E031501`), so numbering never shifts.
+> Audio-only downloads are skipped unless `include_audio: true` (TV libraries ignore audio).
 
 ---
 

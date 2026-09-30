@@ -316,6 +316,15 @@ Requires `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` in `.env` (see `.env.example`).
 | `music_playlist_sync` | Re-sync (vanished tracks marked unavailable) |
 | `music_playlist_remove` | Remove an archived playlist |
 
+### Media library (Jellyfin / Emby / Plex)
+
+| Tool | Description |
+|------|-------------|
+| `library_export` | Export videos as `Channel/Season YYYY/` with `.nfo` + posters (hardlinks, no extra space) |
+| `library_rebuild` | Rebuild from scratch (`confirm: true`); originals untouched |
+
+Point a Jellyfin/Emby **Shows** library at `MEDIA_LIBRARY_PATH` (default `storage/library`).
+
 ---
 
 ## 6. Usage Examples

@@ -3,11 +3,26 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import { getNextProxy, getProxyMode } from '../proxy/manager';
+import { createLogger } from '../logger';
 
 const execFileAsync = promisify(execFile);
+const log = createLogger('ytdlp');
 
 const STORAGE_PATH = process.env.STORAGE_PATH || './storage';
 const YTDLP_BIN    = process.env.YTDLP_BIN    || 'yt-dlp'; // або повний шлях
+// З ретраями та backoff великий файл може качатись довше — 30 хв за замовчуванням
+const DOWNLOAD_TIMEOUT_MS = parseInt(process.env.YTDLP_TIMEOUT_MIN || '30') * 60 * 1000;
+
+/**
+ * Вбудована надійність yt-dlp: докачка обірваних файлів,
+ * ретраї запитів і фрагментів (DASH) з експоненційним backoff.
+ */
+const RESILIENCE_ARGS = [
+  '--continue',
+  '--retries', '10',
+  '--fragment-retries', '10',
+  '--retry-sleep', 'exp=1:120',
+];
 
 // =============================================
 // Типи
@@ -49,6 +64,7 @@ function buildArgs(videoId: string, opts: DownloadOptions): string[] {
     '--no-warnings',
     '--quiet',
     '--print', 'after_move:filepath',   // виводить фінальний шлях
+    ...RESILIENCE_ARGS,
   ];
 
   // Формат
@@ -102,7 +118,7 @@ function buildProxyArg(): string | null {
 
   if (!proxy) {
     if (mode === 'fallback') {
-      console.warn('⚠  yt-dlp: no healthy proxy, using direct connection (fallback)');
+      log.warn('no healthy proxy, using direct connection (fallback)');
       return null;
     }
     throw new Error('yt-dlp: no healthy proxy available and fallback is disabled');
@@ -144,11 +160,10 @@ export async function downloadVideo(
   const args     = buildArgs(videoId, opts);
   const format   = opts.format || 'audio';
 
-  const { createLogger } = require('../logger');
-  createLogger('ytdlp').info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
+  log.info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
 
   const { stdout, stderr } = await execFileAsync(YTDLP_BIN, args, {
-    timeout: 10 * 60 * 1000, // 10 хвилин максимум
+    timeout: DOWNLOAD_TIMEOUT_MS,
   });
 
   // --print after_move:filepath виводить шлях у stdout
@@ -200,6 +215,7 @@ export async function downloadSubtitles(
     '--output', outTemplate,
     '--quiet',
     '--no-warnings',
+    '--retries', '5',
   ];
 
   if (cookiePath && fs.existsSync(cookiePath)) {
@@ -220,7 +236,7 @@ export async function downloadSubtitles(
     if (!anyPath) return null;
     return fs.readFileSync(anyPath, 'utf-8');
   } catch (e: any) {
-    console.error(`downloadSubtitles(${videoId}) error:`, e.message);
+    log.error({ videoId, error: e.message }, 'subtitle download failed');
     return null;
   }
 }

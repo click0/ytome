@@ -335,6 +335,21 @@ export const musicPlaylistRemoveSchema = z.object({
 });
 
 // =============================================
+// Медіабібліотека (Jellyfin / Emby / Plex)
+// =============================================
+
+export const libraryExportSchema = z.object({
+  channel:       z.string().optional(),
+  include_audio: z.boolean().optional(),
+});
+
+export const libraryRebuildSchema = z.object({
+  channel:       z.string().optional(),
+  include_audio: z.boolean().optional(),
+  confirm:       z.literal(true, { message: 'set confirm: true — rebuild deletes the library folder first' }),
+});
+
+// =============================================
 // Маппінг: tool name → schema
 // =============================================
 
@@ -395,6 +410,9 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   music_playlist_tracks: musicPlaylistTracksSchema,
   music_playlist_sync:   musicPlaylistSyncSchema,
   music_playlist_remove: musicPlaylistRemoveSchema,
+
+  library_export:  libraryExportSchema,
+  library_rebuild: libraryRebuildSchema,
 };
 
 /**

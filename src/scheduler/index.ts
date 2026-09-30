@@ -1,7 +1,8 @@
 import cron from 'node-cron';
 import dotenv from 'dotenv';
-import { getChannels, updateChannelChecked, upsertVideo, logCheck, updateThumbnailPath } from '../db/queries';
-import { getChannelVideos, downloadThumbnail, fetchTranscriptOfflineFirst } from '../youtube/api';
+import { getChannels, updateChannelChecked, upsertVideo, logCheck, updateThumbnailPath, getKnownVideoIds } from '../db/queries';
+import { getChannelVideos, getVideosByIds, downloadThumbnail, type VideoInfo } from '../youtube/api';
+import { fetchChannelFeed } from '../youtube/rss';
 import { getVideoCacheStatus } from '../cache/resolver';
 import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
@@ -14,6 +15,39 @@ const log = createLogger('scheduler');
 
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL || '0 */2 * * *';
 const AUTO_THUMBNAILS = process.env.AUTO_DOWNLOAD_THUMBNAILS !== 'false';
+// RSS-детекція: ~1 одиниця квоти на канал замість 100 (search.list)
+const RSS_DETECTION = process.env.RSS_DETECTION !== 'false';
+
+/**
+ * RSS для вже синхронізованих каналів; search.list — для першої синхронізації
+ * (фід дає лише ~15 останніх, а початковий бекфіл глибший).
+ */
+function usesRss(channel: any): boolean {
+  return RSS_DETECTION && !!channel.last_checked_at;
+}
+
+async function detectNewVideos(
+  channel: any,
+  since: string | undefined,
+  apiKey: string | undefined,
+): Promise<{ videos: VideoInfo[]; via: 'rss' | 'search' }> {
+  if (usesRss(channel)) {
+    try {
+      const entries = await fetchChannelFeed(channel.youtube_id);
+      const known = getKnownVideoIds(entries.map(e => e.video_id));
+      const newIds = entries.map(e => e.video_id).filter(id => !known.has(id));
+      return { videos: await getVideosByIds(newIds, channel.youtube_id, apiKey), via: 'rss' };
+    } catch (e: any) {
+      log.warn({ channel: channel.name, error: e.message }, 'RSS failed — falling back to search.list');
+    }
+  }
+  const { videos } = await getChannelVideos(channel.youtube_id, {
+    publishedAfter: since,
+    maxResults: 50,
+    apiKey,
+  });
+  return { videos, via: 'search' };
+}
 
 // =============================================
 // Проверка одного канала
@@ -31,11 +65,17 @@ export async function checkChannel(channel: any): Promise<number> {
   if (profile) markProfileUsed(profile.id);
 
   try {
-    const { videos } = await getChannelVideos(channel.youtube_id, {
-      publishedAfter: since,
-      maxResults: 50,
-      apiKey: profile?.youtube_api_key ?? undefined,
-    });
+    const { videos: detected, via } = await detectNewVideos(
+      channel, since, profile?.youtube_api_key ?? undefined,
+    );
+
+    // Стріми, що ще йдуть або заплановані, відкладаємо: тривалість невідома.
+    // Вони лишаються у фіді й підхопляться RSS-перевіркою після завершення.
+    const videos = detected.filter(v => !v.live_status || v.live_status === 'none');
+    const deferred = detected.length - videos.length;
+    if (deferred > 0) {
+      log.info({ channel: channel.name, deferred }, 'live/upcoming streams deferred');
+    }
 
     // Застосовуємо фільтри
     const { allowed, blocked } = filterVideos(videos);
@@ -58,7 +98,7 @@ export async function checkChannel(channel: any): Promise<number> {
     updateChannelChecked(channel.id);
     logCheck(channel.id, newCount, 'ok');
 
-    log.info({ channel: channel.name, newVideos: newCount }, 'channel check complete');
+    log.info({ channel: channel.name, newVideos: newCount, via }, 'channel check complete');
     return newCount;
 
   } catch (err: any) {
@@ -88,7 +128,7 @@ export async function checkAllChannels(): Promise<void> {
 
   let totalNew = 0;
   for (const channel of channels) {
-    if (!canAfford('search.list')) {
+    if (!canAfford(usesRss(channel) ? 'videos.list' : 'search.list')) {
       log.warn({ newVideosSoFar: totalNew }, 'quota exhausted mid-run — stopping');
       break;
     }

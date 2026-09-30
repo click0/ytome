@@ -32,6 +32,7 @@ import { backupDatabase, exportTranscriptToDrive, listDriveFiles } from '../goog
 import { exportSubscriptionsToSheet, exportWatchLaterToSheet, exportStatsToSheet, listSheetExports } from '../google/sheets';
 import { extractPlaylistId, fetchPlaylistInfo, fetchPlaylistTracks } from '../youtube/music';
 import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlaylist, saveMusicTracks, getMusicTracks } from '../db/queries-music';
+import { exportLibrary } from '../export/library';
 
 
 // =============================================
@@ -625,6 +626,34 @@ export const TOOLS: Tool[] = [
       type: 'object',
       properties: { playlist: { type: 'string' } },
       required: ['playlist'],
+    },
+  },
+
+  // ----------- Медіабібліотека (Jellyfin / Emby / Plex) -----------
+  {
+    name: 'library_export',
+    description: 'Експорт завантажених відео в бібліотеку для Jellyfin/Emby/Plex: .nfo метадані, постери, ' +
+      'структура "Канал/Season РРРР". Файли — хардлінки (0 байт додатково). Інкрементально й ідемпотентно',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel:       { type: 'string', description: 'channel ID або @handle. Пусто = всі канали' },
+        include_audio: { type: 'boolean', description: 'Включити аудіо-файли (Jellyfin TV-бібліотеки їх ігнорують)' },
+      },
+    },
+  },
+  {
+    name: 'library_rebuild',
+    description: 'Перебудувати бібліотеку з нуля (прибирає застарілі файли після перейменувань/видалень). ' +
+      'Оригінали в storage/media не зачіпаються',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel:       { type: 'string', description: 'Лише цей канал. Пусто = вся бібліотека' },
+        include_audio: { type: 'boolean' },
+        confirm:       { type: 'boolean', description: 'Має бути true' },
+      },
+      required: ['confirm'],
     },
   },
 ];
@@ -1427,6 +1456,26 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       const removed = removeMusicPlaylist(playlistId);
       if (!removed) return err(`Playlist not found: ${playlistId}`);
       return ok({ success: true, playlist_id: playlistId });
+    }
+
+    // ----------- Медіабібліотека -----------
+
+    case 'library_export':
+    case 'library_rebuild': {
+      let channelYoutubeId: string | undefined;
+      if (args.channel) {
+        const channel = getChannel(args.channel) || getChannels().find(
+          (c: any) => c.handle === args.channel
+        );
+        if (!channel) return err(`Channel not found: ${args.channel}`);
+        channelYoutubeId = channel.youtube_id;
+      }
+      const result = await exportLibrary({
+        channelYoutubeId,
+        includeAudio: args.include_audio,
+        rebuild: name === 'library_rebuild',
+      });
+      return ok({ success: result.errors.length === 0, ...result });
     }
 
     default:
