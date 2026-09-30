@@ -105,6 +105,16 @@ export function getUnseenVideos(channelId?: number) {
   `).all() as any[];
 }
 
+/** Які з переданих video ID вже є в архіві */
+export function getKnownVideoIds(youtubeIds: string[]): Set<string> {
+  if (youtubeIds.length === 0) return new Set();
+  const placeholders = youtubeIds.map(() => '?').join(',');
+  const rows = getDb().prepare(
+    `SELECT youtube_id FROM videos WHERE youtube_id IN (${placeholders})`
+  ).all(...youtubeIds) as { youtube_id: string }[];
+  return new Set(rows.map(r => r.youtube_id));
+}
+
 export function markAsSeen(videoYoutubeId: string) {
   getDb().prepare('UPDATE videos SET is_seen = 1 WHERE youtube_id = ?').run(videoYoutubeId);
 }

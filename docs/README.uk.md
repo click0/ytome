@@ -316,6 +316,15 @@ Linux:    ~/.config/Claude/claude_desktop_config.json
 | `music_playlist_sync` | Пересинхронізація (зниклі треки → unavailable) |
 | `music_playlist_remove` | Видалити архівований плейлист |
 
+### Медіабібліотека (Jellyfin / Emby / Plex)
+
+| Інструмент | Опис |
+|------------|------|
+| `library_export` | Експорт відео у структуру `Канал/Season РРРР/` з `.nfo` і постерами (хардлінки, без зайвого місця) |
+| `library_rebuild` | Перебудова з нуля (`confirm: true`); оригінали не зачіпаються |
+
+Вкажи бібліотеці Jellyfin/Emby типу **Shows** теку `MEDIA_LIBRARY_PATH` (за замовчуванням `storage/library`).
+
 ---
 
 ## 6. Приклади використання

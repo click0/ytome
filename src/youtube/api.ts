@@ -66,6 +66,7 @@ export interface VideoInfo {
   thumbnail_url?: string;
   tags?: string[];
   language?: string;
+  live_status?: 'none' | 'upcoming' | 'live';   // стрім ще йде/заплановано
 }
 
 // =============================================
@@ -137,48 +138,63 @@ export async function getChannelVideos(
   });
 
   trackQuota('search.list', channelId);
-  const items = searchRes.data.items || [];
-  if (items.length === 0) return { videos: [] };
-
-  // Получаем детали (duration и т.д.) одним запросом
-  const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
-  if (videoIds.length > 0) trackQuota('videos.list', channelId, videoIds.length);
-  const detailsRes = await yt.videos.list({
-    part: ['snippet', 'contentDetails', 'statistics'],
-    id: videoIds,
-  });
-
-  const detailsMap = new Map(
-    (detailsRes.data.items || []).map(v => [v.id, v])
-  );
-
-  const videos: VideoInfo[] = items.map(item => {
-    const vid = item.id?.videoId!;
-    const details = detailsMap.get(vid);
-    const durationSec = parseDuration(details?.contentDetails?.duration);
-    const isShort = durationSec !== null && durationSec <= 60;
-
-    return {
-      youtube_id:          vid,
-      channel_youtube_id:  channelId,
-      title:               item.snippet?.title || 'Untitled',
-      description:         details?.snippet?.description ?? undefined,
-      published_at:        item.snippet?.publishedAt || new Date().toISOString(),
-      duration_sec:        durationSec ?? undefined,
-      type:                isShort ? 'short' : 'video',
-      view_count:          parseInt(details?.statistics?.viewCount || '0'),
-      like_count:          parseInt(details?.statistics?.likeCount || '0'),
-      thumbnail_url:       (item.snippet?.thumbnails?.high?.url
-                        || item.snippet?.thumbnails?.default?.url) ?? undefined,
-      tags:                details?.snippet?.tags ?? undefined,
-      language:            details?.snippet?.defaultAudioLanguage ?? undefined,
-    };
-  });
+  const videoIds = (searchRes.data.items || [])
+    .map(i => i.id?.videoId).filter(Boolean) as string[];
 
   return {
-    videos,
+    videos: await getVideosByIds(videoIds, channelId, options.apiKey),
     nextPageToken: searchRes.data.nextPageToken ?? undefined,
   };
+}
+
+/**
+ * Деталі відео за ID — videos.list, 1 одиниця квоти на 50 відео.
+ * Порядок результату = порядок videoIds; зниклі/приватні відео відкидаються.
+ */
+export async function getVideosByIds(
+  videoIds: string[],
+  channelId: string,
+  apiKey?: string,
+): Promise<VideoInfo[]> {
+  if (videoIds.length === 0) return [];
+  const yt = await getYoutube(apiKey);
+  const details = new Map<string, youtube_v3.Schema$Video>();
+
+  for (let i = 0; i < videoIds.length; i += 50) {
+    const batch = videoIds.slice(i, i + 50);
+    assertQuota('videos.list');
+    const res = await yt.videos.list({
+      part: ['snippet', 'contentDetails', 'statistics'],
+      id: batch,
+    });
+    trackQuota('videos.list', channelId);
+    for (const v of res.data.items || []) if (v.id) details.set(v.id, v);
+  }
+
+  return videoIds.flatMap(vid => {
+    const d = details.get(vid);
+    if (!d) return [];
+    const durationSec = parseDuration(d.contentDetails?.duration);
+    const isShort = durationSec !== null && durationSec <= 60;
+    const live = d.snippet?.liveBroadcastContent;
+
+    return [{
+      youtube_id:         vid,
+      channel_youtube_id: channelId,
+      title:              d.snippet?.title || 'Untitled',
+      description:        d.snippet?.description ?? undefined,
+      published_at:       d.snippet?.publishedAt || new Date().toISOString(),
+      duration_sec:       durationSec ?? undefined,
+      type:               isShort ? 'short' : 'video',
+      view_count:         parseInt(d.statistics?.viewCount || '0'),
+      like_count:         parseInt(d.statistics?.likeCount || '0'),
+      thumbnail_url:      (d.snippet?.thumbnails?.high?.url
+                        || d.snippet?.thumbnails?.default?.url) ?? undefined,
+      tags:               d.snippet?.tags ?? undefined,
+      language:           d.snippet?.defaultAudioLanguage ?? undefined,
+      live_status:        live === 'live' || live === 'upcoming' ? live : 'none',
+    } satisfies VideoInfo];
+  });
 }
 
 // =============================================

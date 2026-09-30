@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import { createLogger } from '../logger';
 
 dotenv.config();
 
@@ -132,7 +133,6 @@ export function initDb(): void {
       ('created_at', datetime('now'));
   `);
 
-  const { createLogger } = require('../logger');
   createLogger('db').info({ path: DB_PATH }, 'database initialized');
 }
 
