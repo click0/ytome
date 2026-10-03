@@ -1,0 +1,81 @@
+name: FreeBSD
+
+# Збірка й тести у VM FreeBSD. better-sqlite3 не має готових бінарників
+# під FreeBSD — node-gyp компілює його з вихідників, і саме це тут перевіряється.
+#
+# Запуск:
+#   * push у main і PR → main (гейт мержу);
+#   * щотижня (ловить поломки від оновлень pkg / бази);
+#   * вручну.
+#
+# Версії — останні мінорні гілок 14 і 15: репозиторій pkg збирається під
+# свіжий мінорний реліз, на старших `pkg install` падає з невідповідністю ядра.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * 1'   # понеділок 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: FreeBSD ${{ matrix.freebsd-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        freebsd-version: ['14.5', '15.1']
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build + test on FreeBSD
+        uses: cross-platform-actions/action@v1.6.0
+        timeout-minutes: 45
+        with:
+          operating_system: freebsd
+          version: ${{ matrix.freebsd-version }}
+          shell: sh
+          memory: 6G
+          cpu_count: 3
+          run: |
+            set -ex
+
+            echo "::group::Install packages"
+            # python3 і gmake — для node-gyp (збірка better-sqlite3 з вихідників)
+            sudo pkg install -y node22 npm-node22 python3 gmake
+            uname -a
+            node --version
+            npm --version
+            echo "::endgroup::"
+
+            echo "::group::npm ci"
+            npm ci --no-audit --no-fund
+            echo "::endgroup::"
+
+            echo "::group::Type check"
+            npx tsc --noEmit
+            echo "::endgroup::"
+
+            echo "::group::Tests"
+            npm test
+            echo "::endgroup::"
+
+            echo "::group::Build + smoke test"
+            npm run build
+            node scripts/smoke.mjs
+            echo "::endgroup::"

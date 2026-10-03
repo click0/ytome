@@ -25,7 +25,7 @@
 
 | Component | Requirement |
 |-----------|-------------|
-| Node.js | v18 or newer — [nodejs.org](https://nodejs.org) |
+| Node.js | v20 or newer — [nodejs.org](https://nodejs.org) |
 | npm | v9+ (bundled with Node.js) |
 | yt-dlp | Optional — for downloading audio/video |
 | Disk space | ~50 MB for archive data (metadata + transcripts + thumbnails) |
@@ -60,7 +60,7 @@ If Node.js is not installed on your system:
   nvm install 22
   ```
 
-Verify: `node -v` (should show v18+) and `npm -v` (should show v9+).
+Verify: `node -v` (should show v20+) and `npm -v` (should show v9+).
 
 ---
 

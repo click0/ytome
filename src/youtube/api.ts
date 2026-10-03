@@ -9,7 +9,7 @@ import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const log = createLogger('youtube');
 

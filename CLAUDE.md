@@ -22,7 +22,7 @@ npm test
 - **Filters**: `src/filters/` — whitelist/blacklist engine
 - **Scheduler**: `src/scheduler/` — cron-based channel checking; RSS detection (`src/youtube/rss.ts`) for already-synced channels, `search.list` only for first sync
 - **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
-- **Logger**: `src/logger.ts` — pino structured logging
+- **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel)
 - **Validation**: `src/mcp/validation.ts` — Zod schemas for all MCP tool inputs
 
 ## Database
@@ -39,17 +39,23 @@ Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 - Proxy agent functions are async (ESM dynamic imports): `buildAgent()`, `axiosProxyConfig()`, `googleApiProxyConfig()`
 - All MCP tool inputs validated via Zod schemas in `src/mcp/validation.ts`
 - Logging via `createLogger('module')` from `src/logger.ts` — never use `console.log`
+- Nothing may write to stdout in the stdio server except JSON-RPC: `dotenv.config({ quiet: true })` everywhere (dotenv 17 prints tips to stdout); `npm run smoke` enforces it
+- Node.js >= 20 (`engines`); release version lives in package.json, package-lock.json and README/docs footers — `npm run check:version`
 
 ## Testing
 
 ```bash
-npm test          # vitest run (130 tests)
+npm test          # vitest run (145 tests)
 npm run test:watch
+npm run smoke     # build + smoke test of both MCP transports
 ```
 
-Tests in `tests/`: validation, helpers, filters, evaluation, logger.
+Tests in `tests/`: unit tests, library export end-to-end on a temp DB, CI/release scripts, tools ↔ schemas invariant.
 
 ## CI/CD
 
-- `.github/workflows/ci.yml` — type check + build + test on push/PR
-- `.github/workflows/release.yml` — build + package `ytome-{version}.tar.gz` on `v*` tags
+- `.github/workflows/ci.yml` — type check + version check → tests (Node 20/22/24, Windows, macOS) → build, package, smoke test of the release archive
+- `.github/workflows/freebsd.yml` — FreeBSD 14/15 VM (better-sqlite3 built from source): main, PRs, weekly
+- `.github/workflows/release.yml` — on `v*` tag (or web-UI release): gates, `ytome-X.Y.Z.{tar.gz,zip}`, SHA256SUMS, provenance attestation, notes from `CHANGELOG.md` (hand-written descriptions are kept). Manual run = dry-run
+- `scripts/` — `check-version.mjs`, `release-notes.mjs`, `package.sh`, `smoke.mjs` (shared by CI and release)
+- Releasing: bump version, move `## [Unreleased]` → `## [X.Y.Z] - date` in CHANGELOG.md, merge, then create the release in the GitHub UI

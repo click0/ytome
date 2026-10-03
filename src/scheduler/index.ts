@@ -9,7 +9,7 @@ import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { createLogger } from '../logger';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const log = createLogger('scheduler');
 

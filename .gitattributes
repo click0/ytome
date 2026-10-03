@@ -1,0 +1,4 @@
+# Скрипти — завжди LF. На Windows checkout дає CRLF, а з ним shebang
+# не вирізається при транспіляції в тестах (SyntaxError), і sh-скрипти ламаються.
+*.sh  text eol=lf
+*.mjs text eol=lf

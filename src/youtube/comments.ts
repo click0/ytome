@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
 import { getYoutube } from './api';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 export interface FetchedComment {
   youtube_comment_id: string;

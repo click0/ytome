@@ -4,7 +4,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { createLogger } from '../logger';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const DB_PATH = process.env.DB_PATH || './storage/archive.db';
 
