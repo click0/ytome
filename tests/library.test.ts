@@ -1,7 +1,7 @@
 /**
  * End-to-end тест експорту медіабібліотеки на тимчасовій БД і справжніх файлах.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -121,5 +121,106 @@ describe('assertSafeLibraryRoot', () => {
 
   it('refuses a folder inside the media originals', () => {
     expect(() => lib.assertSafeLibraryRoot(path.join(STORAGE, 'media', 'lib'))).toThrow(/Refusing to rebuild/);
+  });
+});
+
+// =============================================
+// Ланцюжок: хардлінк → клон блоків → (copy) → symlink
+// Справжній reflink тут не перевірити (немає btrfs/XFS/ZFS),
+// тому "інший датасет" і "клон недоступний" імітуємо моками.
+// =============================================
+
+const errno = (code: string) => Object.assign(new Error(code), { code });
+const realCopy = fs.copyFileSync.bind(fs);
+
+describe('linkFile fallback chain', () => {
+  const dir = path.join(TMP, 'linktest');
+  const src = path.join(dir, 'src.mp4');
+  let n = 0;
+  const nextDst = () => path.join(dir, `dst-${++n}.mp4`);
+
+  beforeAll(() => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(src, 'payload');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.LIBRARY_LINK_MODE;
+  });
+
+  it('uses a hardlink on the same filesystem', () => {
+    expect(lib.linkFile(src, nextDst())).toBe('hardlink');
+  });
+
+  it('reports "exists" without touching an existing target', () => {
+    const dst = nextDst();
+    fs.writeFileSync(dst, 'keep');
+    expect(lib.linkFile(src, dst)).toBe('exists');
+    expect(fs.readFileSync(dst, 'utf-8')).toBe('keep');
+  });
+
+  it('clones blocks when hardlink crosses filesystems (EXDEV)', () => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw errno('EXDEV'); });
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((s: any, d: any) => realCopy(s, d));
+    const dst = nextDst();
+
+    expect(lib.linkFile(src, dst)).toBe('clone');
+    // Клон лише примусовий — тихої повної копії бути не може
+    expect(copy).toHaveBeenCalledWith(src, dst, fs.constants.COPYFILE_FICLONE_FORCE);
+  });
+
+  it('auto mode: falls back to symlink when cloning is unavailable', () => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw errno('EXDEV'); });
+    vi.spyOn(fs, 'copyFileSync').mockImplementation((_s: any, d: any) => {
+      fs.writeFileSync(d, '');            // імітуємо порожній залишок невдалої спроби
+      throw errno('ENOTTY');
+    });
+    const dst = nextDst();
+
+    expect(lib.linkFile(src, dst)).toBe('symlink');
+    expect(fs.lstatSync(dst).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(dst)).toBe(path.resolve(src));
+  });
+
+  it('copy mode: falls back to a regular copy, never a symlink', () => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw errno('EXDEV'); });
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((s: any, d: any, flags?: any) => {
+      if (flags === fs.constants.COPYFILE_FICLONE_FORCE) throw errno('EOPNOTSUPP');
+      realCopy(s, d);
+    });
+    const dst = nextDst();
+
+    expect(lib.linkFile(src, dst, 'copy')).toBe('copy');
+    expect(copy).toHaveBeenLastCalledWith(src, dst);   // звичайна копія — без прапорців
+    expect(fs.lstatSync(dst).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(dst, 'utf-8')).toBe('payload');
+  });
+
+  it('rethrows hardlink errors that are not "wrong filesystem"', () => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw errno('EACCES'); });
+    expect(() => lib.linkFile(src, nextDst())).toThrow('EACCES');
+  });
+
+  it('reads LIBRARY_LINK_MODE, unknown values fall back to auto', () => {
+    process.env.LIBRARY_LINK_MODE = 'COPY';
+    expect(lib.getLinkMode()).toBe('copy');
+    process.env.LIBRARY_LINK_MODE = 'reflink-please';
+    expect(lib.getLinkMode()).toBe('auto');
+  });
+
+  it('export report counts copies and their bytes in copy mode', async () => {
+    process.env.LIBRARY_LINK_MODE = 'copy';
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw errno('EXDEV'); });
+    vi.spyOn(fs, 'copyFileSync').mockImplementation((s: any, d: any, flags?: any) => {
+      if (flags === fs.constants.COPYFILE_FICLONE_FORCE) throw errno('EXDEV');
+      realCopy(s, d);
+    });
+
+    const r = await lib.exportLibrary({ rebuild: true });
+    expect(r.link_mode).toBe('copy');
+    expect(r.copied).toBe(2);
+    expect(r.copied_bytes).toBe('video-1-bytes'.length + 'video-2-bytes'.length);
+    expect(r.hardlinked + r.symlinked).toBe(0);
   });
 });
