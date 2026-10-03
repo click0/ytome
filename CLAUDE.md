@@ -21,7 +21,7 @@ npm test
 - **Cache**: `src/cache/` — offline-first resolver (DB → files → network)
 - **Filters**: `src/filters/` — whitelist/blacklist engine
 - **Scheduler**: `src/scheduler/` — cron-based channel checking; RSS detection (`src/youtube/rss.ts`) for already-synced channels, `search.list` only for first sync
-- **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlinks + rebuild guard)
+- **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
 - **Logger**: `src/logger.ts` — pino structured logging
 - **Validation**: `src/mcp/validation.ts` — Zod schemas for all MCP tool inputs
 
@@ -43,7 +43,7 @@ Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 ## Testing
 
 ```bash
-npm test          # vitest run (122 tests)
+npm test          # vitest run (130 tests)
 npm run test:watch
 ```
 

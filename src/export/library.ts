@@ -34,7 +34,11 @@ export interface LibraryExportResult {
   library_path: string;
   channels: number;
   exported: number;
+  link_mode: LinkMode;
   hardlinked: number;
+  cloned: number;
+  copied: number;
+  copied_bytes: number;     // верхня межа витрат місця в copy-режимі (якщо копія не склонувалась)
   symlinked: number;
   unchanged: number;
   missing_source: number;
@@ -42,21 +46,64 @@ export interface LibraryExportResult {
   errors: string[];
 }
 
-type LinkMethod = 'hardlink' | 'symlink' | 'exists';
+export type LinkMethod = 'hardlink' | 'clone' | 'copy' | 'symlink' | 'exists';
 
-/** Хардлінк, або symlink якщо інший диск / ФС без хардлінків */
-function linkFile(src: string, dst: string): LinkMethod {
+/**
+ * Що робити, коли хардлінк неможливий (інша ФС, інший датасет ZFS):
+ *   auto — гарантований клон блоків (reflink), інакше symlink.
+ *          Додаткове місце не витрачається ніколи.
+ *   copy — гарантований клон, інакше звичайна копія через copy_file_range.
+ *          На OpenZFS 2.2+ з block cloning це клон навіть між датасетами
+ *          одного пулу, але якщо клонування вимкнене — повна копія.
+ *          Для Jellyfin у Docker, де symlink на теку поза контейнером битий.
+ */
+export type LinkMode = 'auto' | 'copy';
+
+export function getLinkMode(): LinkMode {
+  const mode = (process.env.LIBRARY_LINK_MODE || 'auto').toLowerCase();
+  if (mode === 'auto' || mode === 'copy') return mode;
+  log.warn({ mode }, 'unknown LIBRARY_LINK_MODE, using auto');
+  return 'auto';
+}
+
+/** Коди, за яких хардлінк неможливий у принципі — пробуємо наступний спосіб */
+const HARDLINK_FALLBACK_CODES = new Set(['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK']);
+
+/**
+ * Клон блоків (FICLONE на Linux, clonefile на macOS).
+ * FICLONE_FORCE: або справжній клон, або помилка — тихої повної копії не буде.
+ */
+function tryClone(src: string, dst: string): boolean {
+  try {
+    fs.copyFileSync(src, dst, fs.constants.COPYFILE_FICLONE_FORCE);
+    return true;
+  } catch (e: any) {
+    // dst до виклику не існував — прибираємо порожній залишок невдалої спроби
+    fs.rmSync(dst, { force: true });
+    log.debug({ src, code: e.code }, 'block clone unavailable');
+    return false;
+  }
+}
+
+/** Хардлінк → клон блоків → (copy-режим: копія) → symlink */
+export function linkFile(src: string, dst: string, mode: LinkMode = 'auto'): LinkMethod {
   if (fs.existsSync(dst)) return 'exists';
   try {
     fs.linkSync(src, dst);
     return 'hardlink';
   } catch (e: any) {
-    if (e.code === 'EXDEV' || e.code === 'EPERM' || e.code === 'ENOTSUP') {
-      fs.symlinkSync(path.resolve(src), dst);
-      return 'symlink';
-    }
-    throw e;
+    if (!HARDLINK_FALLBACK_CODES.has(e.code)) throw e;
   }
+
+  if (tryClone(src, dst)) return 'clone';
+
+  if (mode === 'copy') {
+    fs.copyFileSync(src, dst);
+    return 'copy';
+  }
+
+  fs.symlinkSync(path.resolve(src), dst);
+  return 'symlink';
 }
 
 /**
@@ -102,7 +149,7 @@ function computeDayIndexes(channelDbId: number): Map<string, number> {
   return indexes;
 }
 
-async function ensureChannelPoster(channel: any, showDir: string): Promise<void> {
+async function ensureChannelPoster(channel: any, showDir: string, mode: LinkMode): Promise<void> {
   const poster = path.join(showDir, 'poster.jpg');
   if (fs.existsSync(poster)) return;
 
@@ -114,7 +161,7 @@ async function ensureChannelPoster(channel: any, showDir: string): Promise<void>
     src = await downloadThumbnail(channel.youtube_id, channel.thumbnail_url);
     if (src) getDb().prepare('UPDATE channels SET thumbnail_path = ? WHERE id = ?').run(src, channel.id);
   }
-  if (src) linkFile(src, poster);
+  if (src) linkFile(src, poster, mode);
 }
 
 export async function exportLibrary(opts: {
@@ -137,10 +184,12 @@ export async function exportLibrary(opts: {
     for (const t of targets) fs.rmSync(t, { recursive: true, force: true });
   }
 
+  const mode = getLinkMode();
   const result: LibraryExportResult = {
     library_path: libraryPath,
-    channels: 0, exported: 0, hardlinked: 0, symlinked: 0, unchanged: 0,
-    missing_source: 0, skipped_audio_only: 0, errors: [],
+    link_mode: mode,
+    channels: 0, exported: 0, hardlinked: 0, cloned: 0, copied: 0, copied_bytes: 0,
+    symlinked: 0, unchanged: 0, missing_source: 0, skipped_audio_only: 0, errors: [],
   };
 
   const videosStmt = db.prepare(`
@@ -174,16 +223,23 @@ export async function exportLibrary(opts: {
         const dayIndex = dayIndexes.get(v.youtube_id) || 1;
         const base = episodeBaseName(channel.name, video, dayIndex);
 
-        const method = linkFile(src, path.join(seasonDir, base + path.extname(src)));
-        if (method === 'hardlink') result.hardlinked++;
-        else if (method === 'symlink') result.symlinked++;
-        else result.unchanged++;
+        const method = linkFile(src, path.join(seasonDir, base + path.extname(src)), mode);
+        switch (method) {
+          case 'hardlink': result.hardlinked++; break;
+          case 'clone':    result.cloned++;     break;
+          case 'copy':
+            result.copied++;
+            result.copied_bytes += fs.statSync(src).size;
+            break;
+          case 'symlink':  result.symlinked++;  break;
+          case 'exists':   result.unchanged++;  break;
+        }
 
         // NFO перезаписуємо завжди — метадані могли оновитись
         fs.writeFileSync(path.join(seasonDir, `${base}.nfo`), buildEpisodeNfo(nfoChannel, video, dayIndex));
 
         if (v.thumbnail_path && fs.existsSync(v.thumbnail_path)) {
-          linkFile(v.thumbnail_path, path.join(seasonDir, `${base}-thumb.jpg`));
+          linkFile(v.thumbnail_path, path.join(seasonDir, `${base}-thumb.jpg`), mode);
         }
 
         result.exported++;
@@ -195,7 +251,7 @@ export async function exportLibrary(opts: {
 
     if (channelExported > 0) {
       fs.writeFileSync(path.join(showDir, 'tvshow.nfo'), buildShowNfo(nfoChannel));
-      await ensureChannelPoster(channel, showDir).catch(e =>
+      await ensureChannelPoster(channel, showDir, mode).catch(e =>
         result.errors.push(`${channel.youtube_id} poster: ${e.message}`)
       );
       result.channels++;

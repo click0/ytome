@@ -348,6 +348,13 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 > `MEDIA_LIBRARY_PATH` (default `storage/library`). Channel = show, publish year = season,
 > episode = `MMDD` + daily index (e.g. `S2026E031501`), so numbering never shifts.
 > Audio-only downloads are skipped unless `include_audio: true` (TV libraries ignore audio).
+>
+> Files are linked without using extra space: **hardlink** → **block clone** (reflink: btrfs, XFS,
+> APFS, ZFS within one dataset) → **symlink**. If the library is on another filesystem or ZFS
+> dataset and Jellyfin runs in Docker, set `LIBRARY_LINK_MODE=copy` — symlinks pointing outside the
+> container break, while a copy works everywhere (on OpenZFS 2.2+ with block cloning it is a free
+> clone even across datasets). The `library_export` report shows `hardlinked` / `cloned` / `copied`
+> / `symlinked` counts and `copied_bytes`.
 
 ---
 
