@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Версія узгоджена всюди: package.json ↔ package-lock.json ↔ README/docs,
  * а з --tag — ще й тег релізу (v0.85 або v0.85.0 для версії 0.85.0).
