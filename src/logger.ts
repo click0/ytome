@@ -12,26 +12,29 @@
 import pino from 'pino';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const level  = process.env.LOG_LEVEL  || 'info';
 const pretty = process.env.LOG_PRETTY !== 'false';
 
-const transport = pretty
-  ? {
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-        translateTime: 'HH:MM:ss',
-        ignore: 'pid,hostname',
-      },
-    }
-  : undefined;
+// Логи — лише в stderr: у stdio MCP-сервері stdout є каналом протоколу,
+// і будь-який рядок, що не є JSON-RPC, ламає з'єднання з клієнтом.
+const STDERR = 2;
 
-export const logger = pino({
-  level,
-  ...(transport ? { transport } : {}),
-});
+export const logger = pretty
+  ? pino({
+      level,
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'HH:MM:ss',
+          ignore: 'pid,hostname',
+          destination: STDERR,
+        },
+      },
+    })
+  : pino({ level }, pino.destination(STDERR));
 
 /** Дочірній логер з контекстом модуля */
 export function createLogger(module: string) {

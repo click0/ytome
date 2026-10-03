@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Один згрупований PR на тиждень замість PR на кожен action —
+  # окремі PR, що правлять ті самі workflow, конфліктують між собою.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+
+  # npm: мінорні й патчі — одним PR; мажорні окремо, бо ламають API
+  # (як було з proxy-агентами ESM, Express 5, Zod 4, TypeScript 6).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "build(deps)"

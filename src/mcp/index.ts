@@ -13,7 +13,7 @@ import { createLogger } from '../logger.js';
 
 const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')).version;
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const log = createLogger('mcp-stdio');
 

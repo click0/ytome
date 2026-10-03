@@ -2,6 +2,9 @@
   "name": "ytome",
   "version": "0.85.0",
   "description": "Independent YouTube archive & MCP server for Claude",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/mcp/index.js",
   "scripts": {
     "build": "tsc",
@@ -12,7 +15,9 @@
     "scheduler": "node dist/scheduler/index.js",
     "watch": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:version": "node scripts/check-version.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
