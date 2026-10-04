@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-10-04
+
 ### Added
 - Медіабібліотека для Jellyfin / Emby / Plex: `library_export`, `library_rebuild` —
   `.nfo`, постери, структура `Канал/Season РРРР`, стабільна нумерація епізодів
@@ -59,7 +61,8 @@
 
 - Перший публічний реліз
 
-[Unreleased]: https://github.com/click0/ytome/compare/v0.85...HEAD
+[Unreleased]: https://github.com/click0/ytome/compare/v0.90...HEAD
+[0.90.0]: https://github.com/click0/ytome/compare/v0.85...v0.90
 [0.85.0]: https://github.com/click0/ytome/compare/v0.75...v0.85
 [0.80.0]: https://github.com/click0/ytome/compare/v0.75...v0.85
 [0.75.0]: https://github.com/click0/ytome/compare/v0.73...v0.75
