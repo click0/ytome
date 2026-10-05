@@ -43,39 +43,42 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build + test on FreeBSD
+      - name: Start FreeBSD ${{ matrix.freebsd-version }} VM
         uses: cross-platform-actions/action@v1.6.0
-        timeout-minutes: 45
         with:
           operating_system: freebsd
           version: ${{ matrix.freebsd-version }}
-          shell: sh
           memory: 6G
           cpu_count: 3
-          run: |
-            set -ex
 
-            echo "::group::Install packages"
-            # python3 і gmake — для node-gyp (збірка better-sqlite3 з вихідників)
-            sudo pkg install -y node22 npm-node22 python3 gmake
-            uname -a
-            node --version
-            npm --version
-            echo "::endgroup::"
+      # Далі команди виконуються у VM через cpa.sh (вхід `run` у дії застарів).
+      # Код синхронізується у VM лише перед першим кроком; назад нічого не
+      # тягнемо — node_modules важать сотні МБ і на runner не потрібні.
+      - name: Install packages
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -ex
+          # python3 і gmake — для node-gyp (збірка better-sqlite3 з вихідників)
+          sudo pkg install -y node22 npm-node22 python3 gmake
+          uname -a
+          node --version
+          npm --version
 
-            echo "::group::npm ci"
-            npm ci --no-audit --no-fund
-            echo "::endgroup::"
+      - name: npm ci (better-sqlite3 from source)
+        shell: cpa.sh {0} --sync-files none
+        run: npm ci --no-audit --no-fund
 
-            echo "::group::Type check"
-            npx tsc --noEmit
-            echo "::endgroup::"
+      - name: Type check
+        shell: cpa.sh {0} --sync-files none
+        run: npx tsc --noEmit
 
-            echo "::group::Tests"
-            npm test
-            echo "::endgroup::"
+      - name: Tests
+        shell: cpa.sh {0} --sync-files none
+        run: npm test
 
-            echo "::group::Build + smoke test"
-            npm run build
-            node scripts/smoke.mjs
-            echo "::endgroup::"
+      - name: Build + smoke test
+        shell: cpa.sh {0} --sync-files none
+        run: |
+          set -e
+          npm run build
+          node scripts/smoke.mjs
