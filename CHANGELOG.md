@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+- FreeBSD CI: кожен етап — окремий крок через `cpa.sh` (вхід `run` дії застарів)
+- dependabot не пропонує better-sqlite3 13: немає готових бінарників для Windows
+
 ## [0.90.0] - 2026-10-04
 
 ### Added

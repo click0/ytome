@@ -23,5 +23,11 @@ updates:
     groups:
       npm-minor:
         update-types: ["minor", "patch"]
+    ignore:
+      # better-sqlite3 13: немає готових бінарників для Windows + Node 22,
+      # а без Visual Studio (C++) node-gyp не збирає модуль — `npm ci` падає
+      # на Windows у CI і в користувачів (PR #20). Прибрати, коли з'являться.
+      - dependency-name: better-sqlite3
+        versions: ["13.x"]
     commit-message:
       prefix: "build(deps)"
