@@ -261,7 +261,8 @@ Linux:    ~/.config/Claude/claude_desktop_config.json
 
 | Інструмент | Опис |
 |------------|------|
-| `get_transcript` | Транскрипція відео (кеш або завантажити). `force_refresh` для оновлення |
+| `get_transcript` | Транскрипція відео (кеш або завантажити). `language`, `force_refresh` |
+| `export_transcript` | Зберегти транскрипт у `storage/exports/transcripts/<id>.txt` (`timestamps: true` — рядки з `[mm:ss]`) |
 | `analyze_transcript` | Завантажити транскрипцію + вказівка для аналізу (summary/key_points/quotes/full) |
 | `get_comments` | Топ коментарі. Параметри: `limit`, `owner_only`, `with_replies` |
 

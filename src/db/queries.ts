@@ -145,6 +145,18 @@ export function saveTranscript(
   `).run(videoDbId, language, text, JSON.stringify(segments), source);
 }
 
+/** Закешувати транскрипт, якщо відео є в архіві; true — збережено */
+export function saveTranscriptForVideo(
+  videoYoutubeId: string,
+  t: { text: string; segments: any[]; language: string },
+): boolean {
+  const video = getDb().prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoYoutubeId) as
+    { id: number } | undefined;
+  if (!video) return false;
+  saveTranscript(video.id, t.text, t.segments, t.language);
+  return true;
+}
+
 export function getTranscript(videoYoutubeId: string) {
   return getDb().prepare(`
     SELECT t.* FROM transcripts t

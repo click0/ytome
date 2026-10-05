@@ -59,6 +59,13 @@ export const getTranscriptSchema = z.object({
   force_refresh: z.boolean().default(false).optional(),
 });
 
+export const exportTranscriptSchema = z.object({
+  video_id:      videoIdOrUrl,
+  language:      z.string().optional(),
+  timestamps:    z.boolean().optional(),
+  force_refresh: z.boolean().optional(),
+});
+
 export const analyzeTranscriptSchema = z.object({
   video_id: videoIdOrUrl,
   task:     z.enum(['summary', 'key_points', 'quotes', 'full']).default('summary').optional(),
@@ -361,6 +368,7 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   mark_seen:          markSeenSchema,
   get_transcript:     getTranscriptSchema,
   analyze_transcript: analyzeTranscriptSchema,
+  export_transcript:  exportTranscriptSchema,
   watch_later_add:    watchLaterAddSchema,
   watch_later_list:   watchLaterListSchema,
   watch_later_update: watchLaterUpdateSchema,

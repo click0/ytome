@@ -8,6 +8,7 @@ import { Readable } from 'stream';
 import { getDriveClient } from './auth';
 import { getDb } from '../db/init';
 import { getTranscript } from '../db/queries';
+import { formatTranscript, lookupVideoMeta } from '../export/transcript';
 import { createLogger } from '../logger';
 
 const log = createLogger('drive');
@@ -92,17 +93,14 @@ export async function exportTranscriptToDrive(videoYoutubeId: string, folderId?:
   const transcript = getTranscript(videoYoutubeId);
   if (!transcript) throw new Error(`No cached transcript for ${videoYoutubeId}. Fetch it first.`);
 
-  const video = getDb().prepare(`
-    SELECT v.title, c.name AS channel_name FROM videos v
-    JOIN channels c ON c.id = v.channel_id WHERE v.youtube_id = ?
-  `).get(videoYoutubeId) as any;
-
-  const title = video?.title || videoYoutubeId;
-  const header = `${title}\n${video?.channel_name || ''}\nhttps://youtube.com/watch?v=${videoYoutubeId}\n\n`;
+  const segments = typeof transcript.segments === 'string' ? JSON.parse(transcript.segments) : [];
+  const content = formatTranscript(
+    videoYoutubeId, { text: transcript.text, segments }, await lookupVideoMeta(videoYoutubeId),
+  );
   const name = `${videoYoutubeId}.txt`;
 
   const result = await uploadFile({
-    content: header + transcript.text,
+    content,
     name,
     folderId: targetFolder,
     mimeType: 'text/plain',

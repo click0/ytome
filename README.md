@@ -248,7 +248,8 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 ### Content
 | Tool | Description |
 |------|-------------|
-| `get_transcript` | Local cache first — network only if missing. `force_refresh` to update |
+| `get_transcript` | Local cache first — network only if missing. `language`, `force_refresh` |
+| `export_transcript` | Save a transcript to `storage/exports/transcripts/<id>.txt` (title, channel, link; `timestamps: true` for `[mm:ss]` lines). Works for videos outside the archive |
 | `analyze_transcript` | Transcript + AI analysis (summary / key_points / quotes / full) |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`. Cached locally |
 | `download` | Download via yt-dlp. `format`: audio / video / video_hd |
@@ -297,6 +298,10 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 | `import_opml` | Import from OPML file |
 | `create_group` / `list_groups` | Channel groups |
 | `quota_status` | YouTube API quota for today with history |
+
+> If a transcript can't be fetched, the error says why: `blocked` (YouTube rejects this IP —
+> "confirm you're not a bot"; use a profile with cookies.txt or a proxy), `login_required`,
+> `unavailable`, `no_captions` or `language` (lists the available ones).
 
 ### Profiles (multiple Google accounts)
 | Tool | Description |

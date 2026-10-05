@@ -261,7 +261,8 @@ If the server is connected, Claude will see the `ytome` tools and respond (with 
 
 | Tool | Description |
 |------|-------------|
-| `get_transcript` | Video transcript (cache or fetch). `force_refresh` to update |
+| `get_transcript` | Video transcript (cache or fetch). `language`, `force_refresh` |
+| `export_transcript` | Save a transcript to `storage/exports/transcripts/<id>.txt` (`timestamps: true` for `[mm:ss]` lines) |
 | `analyze_transcript` | Fetch transcript + analysis instruction (summary/key_points/quotes/full) |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`, `with_replies` |
 
