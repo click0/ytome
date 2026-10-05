@@ -8,6 +8,7 @@ import { axiosProxyConfig, googleApiProxyConfig, getNextProxy, buildAgent } from
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
+import { classifyTranscriptFailure, type TranscriptDiagnostics } from './transcript-errors';
 
 dotenv.config({ quiet: true });
 
@@ -210,7 +211,7 @@ export async function fetchTranscriptOfflineFirst(
   lang?: string,
   forceRefresh = false,
   opts: TranscriptFetchOptions = {}
-): Promise<{ text: string; segments: any[]; language: string; source: string } | null> {
+): Promise<TranscriptResult> {
   if (!forceRefresh) {
     const cached = getTranscriptCached(videoId, lang);
     if (cached.data) {
@@ -233,45 +234,81 @@ export interface TranscriptFetchOptions {
   cookiePath?: string;     // шлях до cookies.txt (для yt-dlp fallback)
 }
 
-export async function fetchTranscript(
-  videoId: string,
-  lang?: string,
-  opts: TranscriptFetchOptions = {}
-): Promise<{
+export interface TranscriptResult {
   text: string;
   segments: Array<{ start: number; dur: number; text: string }>;
   language: string;
   source: string;
-} | null> {
+}
+
+/** Параметри, з якими youtube-transcript-plus викликає fetch-хуки */
+interface HookParams {
+  url: string;
+  method?: string;
+  body?: string;
+  headers?: Record<string, string>;
+  lang?: string;
+  userAgent?: string;
+}
+
+/**
+ * Транскрипт з YouTube; якщо не вийшло — yt-dlp.
+ * Кидає TranscriptUnavailableError з причиною (блок IP, вхід, немає субтитрів…).
+ */
+export async function fetchTranscript(
+  videoId: string,
+  lang?: string,
+  opts: TranscriptFetchOptions = {}
+): Promise<TranscriptResult> {
+  const diag: TranscriptDiagnostics = {};
+  let primaryError: unknown;
+
   try {
     const { fetchTranscript: fetchYT } = await import('youtube-transcript-plus');
     const proxy = getNextProxy();
     const agent = proxy ? await buildAgent(proxy) : undefined;
 
-    // Спільний axios-конфіг: проксі-агент + Cookie профілю
-    const axiosBase: any = agent ? { httpAgent: agent, httpsAgent: agent, proxy: false } : {};
-    const cookieHeaders = opts.cookieHeader ? { Cookie: opts.cookieHeader } : {};
-    const useCustomFetch = !!agent || !!opts.cookieHeader;
+    // Бібліотека чекає від хуків Response-подібний об'єкт (ok/status/text/json).
+    // Хуки додають проксі-агент і Cookie профілю та записують, що відповів YouTube.
+    const request = async (p: HookParams, record: (status: number, body: string) => void) => {
+      const res = await axios.request<string>({
+        url: p.url,
+        method: p.method || 'GET',
+        data: p.body,
+        headers: {
+          ...(p.userAgent ? { 'User-Agent': p.userAgent } : {}),
+          ...(p.lang ? { 'Accept-Language': p.lang } : {}),
+          ...p.headers,
+          ...(opts.cookieHeader ? { Cookie: opts.cookieHeader } : {}),
+        },
+        responseType: 'text',
+        transformResponse: [(d: string) => d],
+        validateStatus: () => true,
+        timeout: 30_000,
+        ...(agent ? { httpAgent: agent, httpsAgent: agent, proxy: false as const } : {}),
+      });
+      const body = typeof res.data === 'string' ? res.data : String(res.data ?? '');
+      record(res.status, body);
+      return {
+        ok: res.status >= 200 && res.status < 300,
+        status: res.status,
+        text: async () => body,
+        json: async () => JSON.parse(body),
+      };
+    };
 
     const segments = await fetchYT(videoId, {
       lang: lang || undefined,
-      retries: 2,
-      retryDelay: 1000,
-      ...(useCustomFetch ? {
-        videoFetch: async ({ url }: any) => {
-          const res = await axios.get(url, { ...axiosBase, headers: cookieHeaders });
-          return res.data;
-        },
-        playerFetch: async ({ url, method, body, headers }: any) => {
-          const res = await axios({ url, method, data: body, headers: { ...headers, ...cookieHeaders }, ...axiosBase });
-          return res.data;
-        },
-        transcriptFetch: async ({ url }: any) => {
-          const res = await axios.get(url, { ...axiosBase, headers: cookieHeaders });
-          return res.data;
-        },
-      } : {}),
-    });
+      videoFetch: (p: HookParams) => request(p, (status, body) => {
+        diag.videoPageStatus = status;
+        diag.recaptcha = body.includes('class="g-recaptcha"');
+      }),
+      playerFetch: (p: HookParams) => request(p, (status, body) => {
+        diag.playerStatus = status;
+        try { diag.playability = JSON.parse(body).playabilityStatus; } catch { /* не JSON */ }
+      }),
+      transcriptFetch: (p: HookParams) => request(p, status => { diag.transcriptStatus = status; }),
+    } as any);
 
     const text = segments.map((s: any) => s.text).join(' ');
     return {
@@ -285,17 +322,20 @@ export async function fetchTranscript(
       source:   'youtube-transcript-plus',
     };
   } catch (err) {
-    log.warn({ videoId }, 'youtube-transcript-plus failed, trying yt-dlp fallback');
+    primaryError = err;
+    log.warn({ videoId, error: (err as Error).message, playability: diag.playability?.status },
+      'youtube-transcript-plus failed, trying yt-dlp fallback');
     try {
       const srt = await downloadSubtitles(videoId, lang || 'en', opts.cookiePath);
       if (srt) {
         const text = srtToText(srt);
-        return { text, segments: [], language: 'auto', source: 'yt-dlp' };
+        return { text, segments: [], language: lang || 'auto', source: 'yt-dlp' };
       }
     } catch (e2) {
       log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
     }
-    return null;
+    // Причина — з основної спроби: там видно відповідь плеєра YouTube
+    throw classifyTranscriptFailure(videoId, primaryError, diag);
   }
 }
 

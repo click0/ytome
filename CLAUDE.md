@@ -21,6 +21,7 @@ npm test
 - **Cache**: `src/cache/` — offline-first resolver (DB → files → network)
 - **Filters**: `src/filters/` — whitelist/blacklist engine
 - **Scheduler**: `src/scheduler/` — cron-based channel checking; RSS detection (`src/youtube/rss.ts`) for already-synced channels, `search.list` only for first sync
+- **Transcripts**: `fetchTranscript` in `src/youtube/api.ts` throws `TranscriptUnavailableError` with a reason (`src/youtube/transcript-errors.ts`); fetch hooks must return Response-like objects (ok/status/text/json); `src/export/transcript.ts` writes `.txt`
 - **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
 - **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel)
 - **Validation**: `src/mcp/validation.ts` — Zod schemas for all MCP tool inputs
@@ -45,7 +46,7 @@ Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 ## Testing
 
 ```bash
-npm test          # vitest run (145 tests)
+npm test          # vitest run (161 tests)
 npm run test:watch
 npm run smoke     # build + smoke test of both MCP transports
 ```

@@ -6,7 +6,7 @@ const log = createLogger('mcp');
 
 import {
   getChannels, addChannel, getChannel, getNewVideos,
-  getUnseenVideos, markAsSeen, getTranscript, saveTranscript,
+  getUnseenVideos, markAsSeen, getTranscript, saveTranscript, saveTranscriptForVideo,
   hasTranscript, createGroup, addChannelToGroup, getGroups,
 } from '../db/queries';
 import {
@@ -33,6 +33,8 @@ import { exportSubscriptionsToSheet, exportWatchLaterToSheet, exportStatsToSheet
 import { extractPlaylistId, fetchPlaylistInfo, fetchPlaylistTracks } from '../youtube/music';
 import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlaylist, saveMusicTracks, getMusicTracks } from '../db/queries-music';
 import { exportLibrary } from '../export/library';
+import { exportTranscriptToFile } from '../export/transcript';
+import { TranscriptUnavailableError } from '../youtube/transcript-errors';
 
 
 // =============================================
@@ -110,7 +112,23 @@ export const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         video_id: { type: 'string', description: 'YouTube video ID или URL' },
+        language: { type: 'string', description: 'Мова субтитрів (uk, ru, en…). Пусто = перша доступна' },
         force_refresh: { type: 'boolean', default: false },
+      },
+      required: ['video_id'],
+    },
+  },
+  {
+    name: 'export_transcript',
+    description: 'Зберегти транскрипт відео в локальний .txt (storage/exports/transcripts/). ' +
+      'З кешу або з YouTube; працює й для відео поза архівом. Заголовок: назва, канал, посилання',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_id:      { type: 'string', description: 'YouTube video ID або URL' },
+        language:      { type: 'string', description: 'Мова субтитрів (uk, ru, en…). Пусто = перша доступна' },
+        timestamps:    { type: 'boolean', description: 'Рядки з таймкодами [mm:ss] замість суцільного тексту' },
+        force_refresh: { type: 'boolean', description: 'Ігнорувати кеш і завантажити заново' },
       },
       required: ['video_id'],
     },
@@ -716,6 +734,12 @@ function err(message: string) {
   };
 }
 
+/** Причина недоступності транскрипту — у відповідь; решту помилок не ковтаємо */
+function transcriptErr(e: unknown) {
+  if (e instanceof TranscriptUnavailableError) return err(`[${e.reason}] ${e.message}`);
+  throw e;
+}
+
 // =============================================
 // Обработчики инструментов
 // =============================================
@@ -829,14 +853,13 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       }
 
       // Загружаем (з cookies профілю якщо канал прив'язаний)
-      const result = await fetchTranscript(videoId, args.language, profileOptsForVideo(videoId));
-      if (!result) return err(`No transcript available for ${videoId}`);
-
-      const video = require('../db/init').getDb()
-        .prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId) as any;
-      if (video) {
-        saveTranscript(video.id, result.text, result.segments, result.language);
+      let result;
+      try {
+        result = await fetchTranscript(videoId, args.language, profileOptsForVideo(videoId));
+      } catch (e) {
+        return transcriptErr(e);
       }
+      saveTranscriptForVideo(videoId, result);
 
       return ok({
         video_id: videoId,
@@ -844,6 +867,27 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         language: result.language,
         text: result.text,
       });
+    }
+
+    case 'export_transcript': {
+      const videoId = extractVideoId(args.video_id);
+      try {
+        const result = await exportTranscriptToFile(videoId, {
+          language:     args.language,
+          forceRefresh: args.force_refresh,
+          timestamps:   args.timestamps,
+          fetch:        profileOptsForVideo(videoId),
+        });
+        return ok({
+          success: true,
+          video_id: videoId,
+          ...result,
+          ...(args.timestamps && !result.timestamps
+            ? { note: 'Таймкодів немає: субтитри отримано через yt-dlp без сегментів' } : {}),
+        });
+      } catch (e) {
+        return transcriptErr(e);
+      }
     }
 
     case 'analyze_transcript': {
@@ -854,9 +898,11 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       if (cached) {
         text = cached.text;
       } else {
-        const result = await fetchTranscript(videoId, undefined, profileOptsForVideo(videoId));
-        if (!result) return err(`No transcript available for ${videoId}`);
-        text = result.text;
+        try {
+          text = (await fetchTranscript(videoId, undefined, profileOptsForVideo(videoId))).text;
+        } catch (e) {
+          return transcriptErr(e);
+        }
       }
 
       // Возвращаем текст — Claude сам анализирует согласно task
