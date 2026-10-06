@@ -67,7 +67,7 @@ export function getWatchLater(options: {
   const status = options.status || 'pending';
   if (status !== 'all') { where += ' AND wl.status = ?'; params.push(status); }
   if (options.priority) { where += ' AND wl.priority = ?'; params.push(options.priority); }
-  if (options.overdue) { where += ' AND wl.remind_at IS NOT NULL AND wl.remind_at < datetime("now")'; }
+  if (options.overdue) { where += " AND wl.remind_at IS NOT NULL AND datetime(wl.remind_at) < datetime('now')"; }
   if (options.tag) { where += ` AND wl.tags LIKE ?`; params.push(`%"${options.tag}"%`); }
 
   const rows = db.prepare(`
@@ -114,7 +114,7 @@ export function getWatchLaterStats() {
       SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
       SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped,
       SUM(CASE WHEN priority='high' AND status='pending' THEN 1 ELSE 0 END) AS high_priority,
-      SUM(CASE WHEN remind_at < datetime('now') AND status='pending' THEN 1 ELSE 0 END) AS overdue
+      SUM(CASE WHEN datetime(remind_at) < datetime('now') AND status='pending' THEN 1 ELSE 0 END) AS overdue
     FROM watch_later
   `).get() as any;
 }

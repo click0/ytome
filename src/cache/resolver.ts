@@ -16,8 +16,10 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init';
+import { parseSqliteTime } from '../db/time';
 
 const STORAGE_PATH = process.env.STORAGE_PATH || './storage';
+
 
 // =============================================
 // Типи
@@ -59,13 +61,12 @@ export function getVideoMeta(youtubeId: string): CacheResult<VideoMeta> {
 
   if (!row) return { data: null, source: 'not_found' };
 
-  // Перевіряємо чи метадані свіжі (< 24 год)
-  const cachedAt  = row.cached_at ? new Date(row.cached_at).getTime() : 0;
-  const ageHours  = (Date.now() - cachedAt) / 3_600_000;
+  // Перевіряємо чи метадані свіжі (< 24 год від останнього оновлення)
+  const ageHours  = (Date.now() - (parseSqliteTime(row.updated_at)?.getTime() ?? 0)) / 3_600_000;
   const stale     = ageHours > 24;
 
   return {
-    data:   row as VideoMeta,
+    data:   { ...row, cached_at: row.updated_at } as VideoMeta,
     source: 'local_db',
     stale,
   };
@@ -141,15 +142,14 @@ export function getCommentsCached(
 
   // Дата останнього оновлення коментарів
   const lastFetch = db.prepare(
-    "SELECT MAX(created_at) as last FROM comments WHERE video_id = ?"
+    "SELECT MAX(fetched_at) as last FROM comments WHERE video_id = ?"
   ).get(video.id) as any;
 
 
   if (comments.length === 0) return { data: null, source: 'not_found' };
 
   // Коментарі вважаємо застарілими після 7 днів
-  const lastFetchMs = lastFetch?.last ? new Date(lastFetch.last).getTime() : 0;
-  const staleDays   = (Date.now() - lastFetchMs) / 86_400_000;
+  const staleDays   = (Date.now() - (parseSqliteTime(lastFetch?.last)?.getTime() ?? 0)) / 86_400_000;
 
   return {
     data:   { count: comments.length, cached_at: lastFetch?.last, comments },

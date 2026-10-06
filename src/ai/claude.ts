@@ -4,6 +4,9 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { createLogger } from '../logger';
+
+const log = createLogger('ai');
 
 let _client: Anthropic | null = null;
 
@@ -87,7 +90,7 @@ export async function askClaudeJSON<T>(req: Omit<ClaudeRequest, 'json'>): Promis
     const clean = res.text.replace(/```json|```/g, '').trim();
     return JSON.parse(clean) as T;
   } catch (e) {
-    console.error('[claude] JSON parse error:', e);
+    log.warn({ provider: 'claude', error: (e as Error).message }, 'JSON parse error');
     return null;
   }
 }

@@ -24,7 +24,11 @@ export function addChannel(
       subscriber_count = excluded.subscriber_count,
       video_count      = excluded.video_count
     RETURNING id
-  `).get({ ...info, visibility, notes }) as { id: number };
+  `).get({
+    // Необов'язкові поля ChannelInfo можуть бути відсутні — better-sqlite3 вимагає всі ключі
+    handle: null, description: null, thumbnail_url: null, subscriber_count: null, video_count: null,
+    ...info, visibility, notes: notes ?? null,
+  }) as { id: number };
   return row.id;
 }
 
@@ -62,6 +66,8 @@ export function upsertVideo(video: VideoInfo, channelDbId: number): number {
       updated_at  = CURRENT_TIMESTAMP
     RETURNING id
   `).get({
+    description: null, duration_sec: null, view_count: null, like_count: null,
+    thumbnail_url: null, language: null,
     ...video,
     channel_id: channelDbId,
     tags: video.tags ? JSON.stringify(video.tags) : null,
@@ -190,6 +196,15 @@ export function addChannelToGroup(groupId: number, channelId: number) {
 
 export function getGroups() {
   return getDb().prepare('SELECT * FROM channel_groups ORDER BY name').all() as any[];
+}
+
+/** Членство каналів у групах (channel_id → назва групи) */
+export function getGroupMemberships(): Array<{ channel_id: number; group_name: string }> {
+  return getDb().prepare(`
+    SELECT m.channel_id, g.name AS group_name
+    FROM channel_group_members m JOIN channel_groups g ON g.id = m.group_id
+    ORDER BY g.name
+  `).all() as Array<{ channel_id: number; group_name: string }>;
 }
 
 // =============================================

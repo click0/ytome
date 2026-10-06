@@ -65,6 +65,17 @@ jobs:
 
       - run: npm ci
       - run: npm test
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.node == '22') }}
+
+      # Один прогін з покриттям: пороги у vitest.config.mts, звіт — у підсумку job
+      - name: Tests with coverage
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '22' }}
+        shell: bash
+        run: |
+          npm run test:coverage -- --coverage.reporter=text --coverage.reporter=text-summary \
+            | tee coverage.txt
+          { echo '### Coverage'; echo '```'; sed -n '/Coverage summary/,/^=*$/p' coverage.txt; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
 
   smoke:
     name: Build, package & smoke test

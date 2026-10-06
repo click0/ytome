@@ -1,132 +1,137 @@
 /**
- * Тести модуля оцінки відео (evaluation)
- *
- * Тестуємо скорингові функції без залежності від БД/AI.
+ * Оцінка відео — справжній src/evaluation, AI-балансувальник підмінено.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Реімплементація скорингових функцій для тестування
-// (оригінал в src/evaluation/index.ts)
+const ai = vi.hoisted(() => ({
+  json: {} as Record<string, unknown>,
+  askJSON: vi.fn(),
+  ask: vi.fn(),
+}));
 
-function scoreFreshness(publishedAt: string): number {
-  const ageMs   = Date.now() - new Date(publishedAt).getTime();
-  const ageDays = ageMs / 86400000;
+vi.mock('../src/ai/balancer', () => ({
+  askJSON: ai.askJSON,
+  ask: ai.ask,
+}));
 
-  if (ageDays <= 7)   return 30;
-  if (ageDays <= 30)  return 25;
-  if (ageDays <= 90)  return 20;
-  if (ageDays <= 180) return 15;
-  if (ageDays <= 365) return 10;
-  return 5;
-}
+import { evaluateVideo, evaluateBatch } from '../src/evaluation/index';
 
-function scoreQuality(input: {
-  title: string;
-  description?: string;
-  view_count?: number;
-  like_count?: number;
-  duration_sec?: number;
-  has_captions: boolean;
-}): number {
-  let score = 0;
+const NOW = new Date('2026-10-06T12:00:00Z');
+const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
 
-  // Duration: too short or too long is bad
-  if (input.duration_sec) {
-    if (input.duration_sec >= 300 && input.duration_sec <= 3600) score += 10;
-    else if (input.duration_sec >= 60) score += 5;
-  }
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+  ai.json = {};
+  ai.askJSON.mockReset().mockImplementation(async (req: { tag: string }) => ai.json[req.tag] ?? null);
+  ai.ask.mockReset().mockResolvedValue({ text: '  Short summary.  ' });
+});
 
-  // Engagement ratio
-  if (input.view_count && input.like_count) {
-    const ratio = input.like_count / input.view_count;
-    if (ratio >= 0.05) score += 10;
-    else if (ratio >= 0.02) score += 5;
-  }
+afterEach(() => vi.useRealTimers());
 
-  // Captions boost
-  if (input.has_captions) score += 5;
-
-  // Educational keywords
-  const text = `${input.title} ${input.description || ''}`.toLowerCase();
-  const eduKeywords = ['tutorial', 'guide', 'course', 'how to', 'explained', 'deep dive', 'урок', 'курс'];
-  if (eduKeywords.some(kw => text.includes(kw))) score += 5;
-
-  return Math.min(score, 30);
-}
-
-describe('scoreFreshness', () => {
-  it('gives max score (30) for videos < 7 days old', () => {
-    const recent = new Date(Date.now() - 3 * 86400000).toISOString();
-    expect(scoreFreshness(recent)).toBe(30);
+describe('evaluateVideo', () => {
+  it('fresh, popular tutorial on a fast-moving topic → high', async () => {
+    ai.json = {
+      relevance: { score: 18, reason: 'r' }, tech_currency: { score: 20 },
+      topics: { topics: ['react', 'hooks'] }, audience: { audience: 'frontend devs' },
+    };
+    const r = await evaluateVideo({
+      youtube_id: 'vid00000001', title: 'React tutorial 2026', published_at: daysAgo(10),
+      view_count: 200_000, like_count: 12_000, has_captions: true, caption_type: 'manual',
+      duration_sec: 1800,
+    });
+    expect(r.volatility).toBe('high');
+    expect(r.age_days).toBe(10);
+    expect(r.score).toEqual({ total: 96, freshness: 30, quality: 28, relevance: 18, tech_currency: 20 });
+    expect(r.recommendation).toBe('high');
+    expect(r.label).toMatch(/РЕКОМЕНДОВАНО/);
+    expect(r.reasons).toEqual(expect.arrayContaining([
+      'Свіжий контент (10 днів)', 'Висока якість (перегляди, лайки, субтитри)', 'Ручні субтитри — краща транскрипція',
+    ]));
+    expect(r.warnings).toEqual([]);
+    expect(r.ai_summary).toBe('Short summary.');
+    expect(r.ai_topics).toEqual(['react', 'hooks']);
+    expect(r.ai_audience).toBe('frontend devs');
+    expect(r.evaluated_at).toBe(NOW.toISOString());
   });
 
-  it('gives 25 for videos 7-30 days old', () => {
-    const twoWeeksAgo = new Date(Date.now() - 14 * 86400000).toISOString();
-    expect(scoreFreshness(twoWeeksAgo)).toBe(25);
+  it('old, short, uncaptioned video on a stable topic → skip with warnings and fallbacks', async () => {
+    ai.ask.mockResolvedValue({ text: '   ' });
+    const r = await evaluateVideo({
+      youtube_id: 'vid00000002', title: 'Sorting algorithms', published_at: '2000-01-01T00:00:00Z',
+      duration_sec: 60, has_captions: false, tags: ['algo', 'cs', 'a', 'b', 'c', 'd'],
+      contains_synthetic_media: true,
+    });
+    expect(r.volatility).toBe('low');
+    // Немає AI-відповіді: релевантність 10 за замовчуванням, техактуальність без сигналів 0
+    expect(r.score).toEqual({ total: 10, freshness: 0, quality: 0, relevance: 10, tech_currency: 0 });
+    expect(r.recommendation).toBe('skip');
+    expect(r.warnings).toEqual([
+      expect.stringMatching(/^Старий контент для low-volatile теми/),
+      'Низькі показники якості',
+      'Немає субтитрів',
+      'Відео містить синтетичний/AI-генерований контент',
+    ]);
+    expect(r.ai_summary).toBeUndefined();
+    expect(r.ai_topics).toEqual(['algo', 'cs', 'a', 'b', 'c']);
+    expect(r.ai_audience).toBeUndefined();
+    // Без сигналів свіжості AI для техактуальності не викликається
+    expect(ai.askJSON.mock.calls.map(([req]) => req.tag)).not.toContain('tech_currency');
   });
 
-  it('gives 20 for videos 30-90 days old', () => {
-    const twoMonthsAgo = new Date(Date.now() - 60 * 86400000).toISOString();
-    expect(scoreFreshness(twoMonthsAgo)).toBe(20);
+  it('freshness decays linearly between ideal and critical age (medium volatility)', async () => {
+    ai.json = { relevance: { score: 20 } };
+    const r = await evaluateVideo({
+      youtube_id: 'vid00000003', title: 'Python course', published_at: daysAgo(410),
+      view_count: 20_000, like_count: 300, has_captions: true, caption_type: 'auto',
+    });
+    expect(r.volatility).toBe('medium');
+    // (410-90)/(730-90) = 0.5 → 15; якість: 6 + 2 + 3 + 4 = 15
+    expect(r.score).toMatchObject({ freshness: 15, quality: 15, relevance: 20, tech_currency: 0, total: 50 });
+    expect(r.recommendation).toBe('medium');
   });
 
-  it('gives 5 for videos > 1 year old', () => {
-    const old = new Date(Date.now() - 400 * 86400000).toISOString();
-    expect(scoreFreshness(old)).toBe(5);
+  it('25–49 points → low', async () => {
+    ai.json = { relevance: { score: 15 } };
+    const r = await evaluateVideo({
+      youtube_id: 'vid00000004', title: 'Python basics', published_at: daysAgo(410),
+      view_count: 20_000, like_count: 300, has_captions: true, caption_type: 'auto',
+    });
+    expect(r.score.total).toBe(41);
+    expect(r.recommendation).toBe('low');
+  });
+
+  it('negative signals cost quality points', async () => {
+    const base = { youtube_id: 'vid00000005', published_at: daysAgo(1), view_count: 1_500, has_captions: true };
+    const plain = await evaluateVideo({ ...base, title: 'Cooking pasta' });
+    const meme  = await evaluateVideo({ ...base, title: 'Cooking pasta #shorts' });
+    expect(plain.score.quality).toBe(3);
+    expect(meme.score.quality).toBe(0);
+  });
+
+  it('ambiguous freshness signals ask AI, falling back to the signal score', async () => {
+    const r = await evaluateVideo({
+      youtube_id: 'vid00000006', title: 'Latest updated guide', published_at: daysAgo(1), has_captions: true,
+    });
+    // 'latest' + 'updated' = 10 → AI не відповів → 10
+    expect(r.score.tech_currency).toBe(10);
+    expect(ai.askJSON.mock.calls.map(([req]) => req.tag)).toContain('tech_currency');
+
+    const many = await evaluateVideo({
+      youtube_id: 'vid00000007', title: 'New latest updated 2026 v2 guide', published_at: daysAgo(1), has_captions: true,
+    });
+    expect(many.score.tech_currency).toBe(20); // ≥15 — без AI
   });
 });
 
-describe('scoreQuality', () => {
-  it('gives points for ideal duration (5-60 min)', () => {
-    const score = scoreQuality({
-      title: 'Test', duration_sec: 600, has_captions: false,
-    });
-    expect(score).toBeGreaterThanOrEqual(10);
-  });
-
-  it('gives fewer points for very short videos', () => {
-    const score = scoreQuality({
-      title: 'Test', duration_sec: 30, has_captions: false,
-    });
-    expect(score).toBeLessThan(10);
-  });
-
-  it('gives caption bonus', () => {
-    const withCaptions = scoreQuality({
-      title: 'Test', has_captions: true,
-    });
-    const withoutCaptions = scoreQuality({
-      title: 'Test', has_captions: false,
-    });
-    expect(withCaptions).toBeGreaterThan(withoutCaptions);
-  });
-
-  it('gives educational keyword bonus', () => {
-    const educational = scoreQuality({
-      title: 'Python Tutorial for Beginners', has_captions: false,
-    });
-    const generic = scoreQuality({
-      title: 'Random Video', has_captions: false,
-    });
-    expect(educational).toBeGreaterThan(generic);
-  });
-
-  it('gives engagement ratio bonus', () => {
-    const highEngagement = scoreQuality({
-      title: 'Test', view_count: 1000, like_count: 100, has_captions: false,
-    });
-    expect(highEngagement).toBeGreaterThanOrEqual(10);
-  });
-
-  it('caps at 30', () => {
-    const maxed = scoreQuality({
-      title: 'Complete TypeScript Tutorial deep dive',
-      description: 'Full course guide explained',
-      duration_sec: 1800,
-      view_count: 1000,
-      like_count: 100,
-      has_captions: true,
-    });
-    expect(maxed).toBeLessThanOrEqual(30);
+describe('evaluateBatch', () => {
+  it('evaluates all inputs and sorts by total score', async () => {
+    ai.json = { relevance: { score: 20 } };
+    const res = await evaluateBatch([
+      { youtube_id: 'old00000001', title: 'Old', published_at: '2000-01-01T00:00:00Z', has_captions: false },
+      { youtube_id: 'new00000001', title: 'Fresh', published_at: daysAgo(1), has_captions: true, caption_type: 'manual' },
+    ]);
+    expect(res.map(r => r.video_id)).toEqual(['new00000001', 'old00000001']);
+    expect(res[0].score.total).toBeGreaterThan(res[1].score.total);
   });
 });

@@ -119,8 +119,9 @@ export async function exportStatsToSheet(opts: {
   const data: SheetData = {
     title: 'ytome — API Usage Stats',
     headers: ['Date', 'Units Used', 'Percent of Limit', '', 'Operation (today)', 'Calls', 'Units'],
-    rows: history.map((h, i) => [
-      h.date, h.total_used, `${h.percent}%`, '',
+    // Дві таблиці поруч: рядків стільки, скільки в довшій
+    rows: Array.from({ length: Math.max(history.length, breakdown.length) }, (_, i) => [
+      history[i]?.date ?? '', history[i]?.total_used ?? '', history[i] ? `${history[i].percent}%` : '', '',
       breakdown[i]?.operation ?? '', breakdown[i]?.calls ?? '', breakdown[i]?.total_units ?? '',
     ]),
   };

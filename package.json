@@ -16,6 +16,7 @@
     "watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "check:version": "node scripts/check-version.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs"
   },
@@ -43,6 +44,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.4",
     "@types/node-cron": "^3.0.11",
+    "@vitest/coverage-v8": "^5.0.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }

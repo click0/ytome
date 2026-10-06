@@ -101,7 +101,9 @@ export async function exportTranscriptToFile(videoId: string, opts: {
 
   const dir = path.join(STORAGE_PATH, 'exports', 'transcripts');
   fs.mkdirSync(dir, { recursive: true });
-  const name = [videoId, opts.language, timestamps ? 'timed' : null].filter(Boolean).join('.') + '.txt';
+  // id і мова приходять від користувача — лише безпечні символи, файл не виходить за межі dir
+  const name = [videoId, opts.language, timestamps ? 'timed' : null]
+    .filter(Boolean).map(p => String(p).replace(/[^\w-]/g, '_')).join('.') + '.txt';
   const filePath = path.resolve(dir, name);
   fs.writeFileSync(filePath, content, 'utf-8');
 

@@ -1,9 +1,17 @@
 import fs from 'fs';
 import path from 'path';
-import { getChannels, getGroups } from '../db/queries';
+import { getChannels, getGroups, getGroupMemberships } from '../db/queries';
 
 const STORAGE_PATH = process.env.STORAGE_PATH || './storage';
 const EXPORTS_DIR  = path.join(STORAGE_PATH, 'exports');
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function unescapeXml(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
 
 function ensureExportsDir() {
   if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
@@ -32,9 +40,13 @@ export function exportOPML(options: {
 
   const now = new Date().toUTCString();
 
-  // Строим карту: channelId → группы
+  // Карта: channelId → назви груп
   const channelGroupMap = new Map<number, string[]>();
-  // (группы пока без member lookup — упрощённо)
+  if (includeGroups) {
+    for (const m of getGroupMemberships()) {
+      channelGroupMap.set(m.channel_id, [...(channelGroupMap.get(m.channel_id) || []), m.group_name]);
+    }
+  }
 
   // Генерируем OPML
   function channelOutline(ch: any): string {
@@ -43,11 +55,7 @@ export function exportOPML(options: {
       ? `https://www.youtube.com/@${ch.handle.replace('@', '')}`
       : `https://www.youtube.com/channel/${ch.youtube_id}`;
 
-    const escapedName = ch.name
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    const escapedName = escapeXml(ch.name);
 
     return [
       `    <outline`,
@@ -59,7 +67,7 @@ export function exportOPML(options: {
       `      visibility="${ch.visibility}"`,
       `      youtubeId="${ch.youtube_id}"`,
       ch.handle ? `      handle="${ch.handle}"` : '',
-      ch.notes  ? `      notes="${ch.notes.replace(/"/g, '&quot;')}"` : '',
+      ch.notes  ? `      notes="${escapeXml(ch.notes)}"` : '',
       `    />`,
     ].filter(Boolean).join('\n');
   }
@@ -77,7 +85,7 @@ export function exportOPML(options: {
         if (members.length === 0) return '';
         members.forEach((ch: any) => groupedChannelIds.add(ch.id));
         return [
-          `  <outline text="${g.name}" title="${g.name}">`,
+          `  <outline text="${escapeXml(g.name)}" title="${escapeXml(g.name)}">`,
           ...members.map(channelOutline),
           `  </outline>`,
         ].join('\n');
@@ -177,8 +185,8 @@ export function parseOPML(content: string): Array<{
     const tag = match[0];
 
     const get = (attr: string) => {
-      const m = new RegExp(`${attr}="([^"]*)"`).exec(tag);
-      return m ? m[1] : undefined;
+      const m = new RegExp(`\\b${attr}="([^"]*)"`).exec(tag);
+      return m ? unescapeXml(m[1]) : undefined;
     };
 
     results.push({
