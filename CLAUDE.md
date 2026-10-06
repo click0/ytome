@@ -30,6 +30,8 @@ npm test
 
 SQLite singleton via `getDb()` from `src/db/init.ts`. Never call `db.close()` manually — the connection is closed automatically on process exit.
 
+Timestamps from `CURRENT_TIMESTAMP` are UTC without a zone — parse with `parseSqliteTime()` (`src/db/time.ts`), never `new Date(row.x)`.
+
 Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 (005: profiles + music tables, 006: sheet_exports).
 
@@ -46,16 +48,21 @@ Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 ## Testing
 
 ```bash
-npm test          # vitest run (161 tests)
+npm test               # vitest run (304 tests)
 npm run test:watch
-npm run smoke     # build + smoke test of both MCP transports
+npm run test:coverage  # + coverage report; thresholds in vitest.config.mts (CI fails below them)
+npm run smoke          # build + smoke test of both MCP transports
 ```
 
-Tests in `tests/`: unit tests, library export end-to-end on a temp DB, CI/release scripts, tools ↔ schemas invariant.
+Tests in `tests/` run against the real modules: `tests/helpers/temp-db.ts` gives each file its own
+storage + SQLite schema (init + all migrations) — call `useTempStorage()` at the top level, then
+import `src/` modules dynamically (they read `STORAGE_PATH`/`DB_PATH` on import). Only the network
+is mocked (googleapis, axios, child_process, Anthropic SDK). Don't reimplement logic inside a test.
+Entry points (`src/mcp/index.ts`, `server-http.ts`) are covered by `npm run smoke`, not coverage.
 
 ## CI/CD
 
-- `.github/workflows/ci.yml` — type check + version check → tests (Node 20/22/24, Windows, macOS) → build, package, smoke test of the release archive
+- `.github/workflows/ci.yml` — type check + version check → tests (Node 20/22/24, Windows, macOS; coverage on Linux/Node 22) → build, package, smoke test of the release archive
 - `.github/workflows/freebsd.yml` — FreeBSD 14/15 VM (better-sqlite3 built from source): main, PRs, weekly
 - `.github/workflows/release.yml` — on `v*` tag (or web-UI release): gates, `ytome-X.Y.Z.{tar.gz,zip}`, SHA256SUMS, provenance attestation, notes from `CHANGELOG.md` (hand-written descriptions are kept). Manual run = dry-run
 - `scripts/` — `check-version.mjs`, `release-notes.mjs`, `package.sh`, `smoke.mjs` (shared by CI and release)

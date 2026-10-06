@@ -7,6 +7,7 @@ import { getVideoCacheStatus } from '../cache/resolver';
 import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
+import { parseSqliteTime } from '../db/time';
 import { createLogger } from '../logger';
 
 dotenv.config({ quiet: true });
@@ -32,13 +33,18 @@ async function detectNewVideos(
   apiKey: string | undefined,
 ): Promise<{ videos: VideoInfo[]; via: 'rss' | 'search' }> {
   if (usesRss(channel)) {
+    // Фолбек лише на збій самого фіду: помилка videos.list (квота, API) — не привід
+    // витрачати 100 одиниць на search.list
+    let entries: Awaited<ReturnType<typeof fetchChannelFeed>> | null = null;
     try {
-      const entries = await fetchChannelFeed(channel.youtube_id);
+      entries = await fetchChannelFeed(channel.youtube_id);
+    } catch (e: any) {
+      log.warn({ channel: channel.name, error: e.message }, 'RSS failed — falling back to search.list');
+    }
+    if (entries) {
       const known = getKnownVideoIds(entries.map(e => e.video_id));
       const newIds = entries.map(e => e.video_id).filter(id => !known.has(id));
       return { videos: await getVideosByIds(newIds, channel.youtube_id, apiKey), via: 'rss' };
-    } catch (e: any) {
-      log.warn({ channel: channel.name, error: e.message }, 'RSS failed — falling back to search.list');
     }
   }
   const { videos } = await getChannelVideos(channel.youtube_id, {
@@ -56,9 +62,7 @@ async function detectNewVideos(
 export async function checkChannel(channel: any): Promise<number> {
   log.info({ channel: channel.name, id: channel.youtube_id }, 'checking channel');
 
-  const since = channel.last_checked_at
-    ? new Date(channel.last_checked_at).toISOString()
-    : undefined;
+  const since = parseSqliteTime(channel.last_checked_at)?.toISOString();
 
   // Профіль каналу: власний API key = окрема квота
   const profile = resolveProfileForChannel(channel.youtube_id);

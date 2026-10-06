@@ -5,6 +5,9 @@
 
 import axios from 'axios';
 import { axiosProxyConfig } from '../proxy/manager';
+import { createLogger } from '../logger';
+
+const log = createLogger('ai');
 
 // =============================================
 // Типи провайдерів
@@ -154,7 +157,7 @@ export async function askProviderJSON<T>(req: ProviderRequest): Promise<T | null
     const clean = res.text.replace(/```json|```/g, '').trim();
     return JSON.parse(clean) as T;
   } catch (e) {
-    console.error(`[${req.provider}] JSON parse error:`, e);
+    log.warn({ provider: req.provider, error: (e as Error).message }, 'JSON parse error');
     return null;
   }
 }

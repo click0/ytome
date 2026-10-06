@@ -1,193 +1,131 @@
 /**
- * Тести модуля фільтрації відео.
- *
- * Використовуємо in-memory SQLite для ізоляції.
+ * Фільтри whitelist/blacklist — справжній модуль src/filters на тимчасовій БД.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { useTempStorage, initTestDb, cleanup } from './helpers/temp-db';
 
-// Для тестів реімплементуємо логіку фільтрації без залежності від getDb()
-// (бо getDb() прив'язаний до файлової БД через .env)
+const { tmp } = useTempStorage('filters');
 
-interface FilterRule {
-  id: number;
-  type: 'whitelist' | 'blacklist';
-  scope: 'channel' | 'description';
-  value: string;
-  case_sensitive: boolean;
-  enabled: boolean;
-  hit_count: number;
-}
+let f: typeof import('../src/filters/index');
+let closeDb: () => void;
 
-interface VideoCandidate {
-  youtube_id: string;
-  channel_youtube_id: string;
-  title: string;
-  description?: string;
-  type: 'video' | 'short';
-}
+beforeAll(async () => {
+  closeDb = (await initTestDb()).closeDb;
+  f = await import('../src/filters/index');
+});
 
-function matchRule(rule: FilterRule, video: VideoCandidate): boolean {
-  const field = rule.scope === 'channel'
-    ? video.channel_youtube_id
-    : (video.description || '');
+afterAll(() => cleanup(tmp, closeDb));
 
-  if (!field) return false;
+beforeEach(() => f.clearFilterRules());
 
-  const value = rule.case_sensitive ? rule.value : rule.value.toLowerCase();
-  const text  = rule.case_sensitive ? field : field.toLowerCase();
+const video = (extra: Partial<import('../src/filters/index').VideoCandidate> = {}) => ({
+  youtube_id: 'vid00000001',
+  channel_youtube_id: 'UCxyz',
+  title: 'Learn React',
+  description: 'A React tutorial with hooks',
+  type: 'video' as const,
+  ...extra,
+});
 
-  if (rule.scope === 'channel') {
-    const normalized = rule.value.startsWith('@')
-      ? rule.value.toLowerCase()
-      : rule.value;
-    return text === normalized || text === rule.value;
-  }
-
-  return text.includes(value);
-}
-
-function applyFilters(
-  rules: FilterRule[],
-  video: VideoCandidate
-): { allowed: boolean; reason?: string } {
-  if (rules.length === 0) return { allowed: true };
-
-  const enabled = rules.filter(r => r.enabled);
-
-  // Whitelist check
-  const whitelists = enabled.filter(r => r.type === 'whitelist');
-  if (whitelists.length > 0) {
-    const scopes = [...new Set(whitelists.map(r => r.scope))];
-    for (const scope of scopes) {
-      const scopeRules = whitelists.filter(r => r.scope === scope);
-      const matched = scopeRules.find(r => matchRule(r, video));
-      if (!matched) {
-        return { allowed: false, reason: `whitelist [${scope}]: no match` };
-      }
-    }
-  }
-
-  // Blacklist check
-  const blacklists = enabled.filter(r => r.type === 'blacklist');
-  for (const rule of blacklists) {
-    if (matchRule(rule, video)) {
-      return { allowed: false, reason: `blacklist [${rule.scope}]: "${rule.value}" matched` };
-    }
-  }
-
-  return { allowed: true };
-}
-
-describe('filter engine', () => {
-  const video: VideoCandidate = {
-    youtube_id: 'abc123',
-    channel_youtube_id: 'UCxyz',
-    title: 'Learn TypeScript in 10 minutes',
-    description: 'A quick tutorial on TypeScript basics with React',
-    type: 'video',
-  };
-
-  it('allows everything when no rules', () => {
-    expect(applyFilters([], video).allowed).toBe(true);
+describe('CRUD', () => {
+  it('addFilterRule upserts by (type, scope, value) and re-enables the rule', () => {
+    const a = f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'react', note: 'n1' });
+    expect(a).toMatchObject({ type: 'blacklist', case_sensitive: false, enabled: true, note: 'n1', hit_count: 0 });
+    f.setFilterEnabled(a.id, false);
+    const b = f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'react', caseSensitive: true });
+    expect(b.id).toBe(a.id);
+    expect(b).toMatchObject({ enabled: true, case_sensitive: true });
+    expect(f.listFilterRules()).toHaveLength(1);
   });
 
-  it('blocks video matching blacklist keyword in description', () => {
-    const rules: FilterRule[] = [{
-      id: 1, type: 'blacklist', scope: 'description', value: 'react',
-      case_sensitive: false, enabled: true, hit_count: 0,
-    }];
-    const result = applyFilters(rules, video);
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('blacklist');
+  it('listFilterRules filters by type and scope, removeFilterRule deletes', () => {
+    const w = f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz' });
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'spam' });
+    expect(f.listFilterRules({ type: 'whitelist' }).map(r => r.value)).toEqual(['UCxyz']);
+    expect(f.listFilterRules({ scope: 'description' }).map(r => r.value)).toEqual(['spam']);
+    f.removeFilterRule(w.id);
+    expect(f.listFilterRules().map(r => r.value)).toEqual(['spam']);
   });
 
-  it('case-sensitive blacklist does not match different case', () => {
-    const rules: FilterRule[] = [{
-      id: 1, type: 'blacklist', scope: 'description', value: 'REACT',
-      case_sensitive: true, enabled: true, hit_count: 0,
-    }];
-    expect(applyFilters(rules, video).allowed).toBe(true);
+  it('clearFilterRules by type or all', () => {
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz' });
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'spam' });
+    f.clearFilterRules('blacklist');
+    expect(f.listFilterRules().map(r => r.type)).toEqual(['whitelist']);
+    f.clearFilterRules();
+    expect(f.listFilterRules()).toEqual([]);
+  });
+});
+
+describe('applyFilters', () => {
+  it('allows everything when there are no rules', () => {
+    expect(f.applyFilters(video())).toEqual({ allowed: true });
   });
 
-  it('whitelist blocks if channel not in whitelist', () => {
-    const rules: FilterRule[] = [{
-      id: 1, type: 'whitelist', scope: 'channel', value: 'UCother',
-      case_sensitive: false, enabled: true, hit_count: 0,
-    }];
-    const result = applyFilters(rules, video);
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('whitelist');
+  it('blacklist keyword in description blocks and counts a hit', () => {
+    const r = f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'REACT' });
+    const res = f.applyFilters(video());
+    expect(res).toMatchObject({ allowed: false, rule_id: r.id });
+    expect(res.reason).toMatch(/blacklist \[description\]: "REACT"/);
+    expect(f.listFilterRules()[0].hit_count).toBe(1);
   });
 
-  it('whitelist allows if channel matches (case-insensitive)', () => {
-    const rules: FilterRule[] = [{
-      id: 1, type: 'whitelist', scope: 'channel', value: 'UCxyz',
-      case_sensitive: false, enabled: true, hit_count: 0,
-    }];
-    // case_sensitive=false: text is lowercased to 'ucxyz', value stays 'UCxyz'
-    // matchRule checks: text === normalized (UCxyz doesn't start with @, so normalized = 'UCxyz')
-    // 'ucxyz' !== 'UCxyz' but also checks text === rule.value → 'ucxyz' !== 'UCxyz'
-    // This exposes a bug in the filter engine: case-insensitive channel matching
-    // doesn't lowercase the value when it's not a @handle.
-    // For now, test with case_sensitive=true for exact match:
-    const rulesExact: FilterRule[] = [{
-      id: 1, type: 'whitelist', scope: 'channel', value: 'UCxyz',
-      case_sensitive: true, enabled: true, hit_count: 0,
-    }];
-    expect(applyFilters(rulesExact, video).allowed).toBe(true);
+  it('case-sensitive blacklist ignores a different case', () => {
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'REACT', caseSensitive: true });
+    expect(f.applyFilters(video()).allowed).toBe(true);
+  });
+
+  it('whitelist by channel ID matches with default (case-insensitive) rules', () => {
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz' });
+    expect(f.applyFilters(video()).allowed).toBe(true);
+    expect(f.applyFilters(video({ channel_youtube_id: 'UCother' }))).toMatchObject({
+      allowed: false, reason: expect.stringMatching(/whitelist \[channel\]: no matching rule for "UCother"/),
+    });
+  });
+
+  it('case-sensitive channel rule requires the exact ID', () => {
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz', caseSensitive: true });
+    expect(f.applyFilters(video({ channel_youtube_id: 'ucxyz' })).allowed).toBe(false);
+    expect(f.applyFilters(video()).allowed).toBe(true);
+  });
+
+  it('channel rules never match by substring', () => {
+    f.addFilterRule({ type: 'blacklist', scope: 'channel', value: 'UCx' });
+    expect(f.applyFilters(video()).allowed).toBe(true);
   });
 
   it('disabled rules are ignored', () => {
-    const rules: FilterRule[] = [{
-      id: 1, type: 'blacklist', scope: 'description', value: 'react',
-      case_sensitive: false, enabled: false, hit_count: 0,
-    }];
-    expect(applyFilters(rules, video).allowed).toBe(true);
-  });
-
-  it('whitelist + blacklist: whitelist checked first, if fails — blocked', () => {
-    const rules: FilterRule[] = [
-      {
-        id: 1, type: 'whitelist', scope: 'channel', value: 'UCother',
-        case_sensitive: true, enabled: true, hit_count: 0,
-      },
-      {
-        id: 2, type: 'blacklist', scope: 'description', value: 'react',
-        case_sensitive: false, enabled: true, hit_count: 0,
-      },
-    ];
-    const result = applyFilters(rules, video);
-    expect(result.allowed).toBe(false);
-    // Whitelist is checked first — channel doesn't match
-    expect(result.reason).toContain('whitelist');
+    const r = f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'react' });
+    f.setFilterEnabled(r.id, false);
+    expect(f.applyFilters(video()).allowed).toBe(true);
   });
 
   it('whitelist pass + blacklist match → blocked by blacklist', () => {
-    const rules: FilterRule[] = [
-      {
-        id: 1, type: 'whitelist', scope: 'channel', value: 'UCxyz',
-        case_sensitive: true, enabled: true, hit_count: 0,
-      },
-      {
-        id: 2, type: 'blacklist', scope: 'description', value: 'react',
-        case_sensitive: false, enabled: true, hit_count: 0,
-      },
-    ];
-    const result = applyFilters(rules, video);
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('blacklist');
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz' });
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'hooks' });
+    expect(f.applyFilters(video()).reason).toMatch(/^blacklist/);
   });
 
-  it('handles video with no description', () => {
-    const noDescVideo: VideoCandidate = {
-      youtube_id: 'x', channel_youtube_id: 'UC1', title: 'Test',
-      type: 'video',
-    };
-    const rules: FilterRule[] = [{
-      id: 1, type: 'blacklist', scope: 'description', value: 'spam',
-      case_sensitive: false, enabled: true, hit_count: 0,
-    }];
-    expect(applyFilters(rules, noDescVideo).allowed).toBe(true);
+  it('whitelist scopes are independent: every scope must match', () => {
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: 'UCxyz' });
+    f.addFilterRule({ type: 'whitelist', scope: 'description', value: 'rust' });
+    expect(f.applyFilters(video()).reason).toMatch(/whitelist \[description\]/);
+    expect(f.applyFilters(video({ description: 'Rust book' })).allowed).toBe(true);
+  });
+
+  it('a video without description does not match description rules', () => {
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'react' });
+    expect(f.applyFilters(video({ description: undefined })).allowed).toBe(true);
+  });
+});
+
+describe('filterVideos', () => {
+  it('splits a batch into allowed and blocked with reasons', () => {
+    f.addFilterRule({ type: 'blacklist', scope: 'description', value: 'sponsored' });
+    const ok = video({ youtube_id: 'ok000000001' });
+    const bad = video({ youtube_id: 'bad00000001', description: 'Sponsored content' });
+    const res = f.filterVideos([ok, bad]);
+    expect(res.allowed).toEqual([ok]);
+    expect(res.blocked).toEqual([{ video: bad, reason: expect.stringMatching(/sponsored/) }]);
   });
 });

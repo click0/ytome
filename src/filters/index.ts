@@ -217,13 +217,8 @@ function matchRule(rule: FilterRule, video: VideoCandidate): boolean {
   const value = rule.case_sensitive ? rule.value        : rule.value.toLowerCase();
   const text  = rule.case_sensitive ? field             : field.toLowerCase();
 
-  if (rule.scope === 'channel') {
-    // Точний збіг для channel ID або @handle
-    const normalized = rule.value.startsWith('@')
-      ? rule.value.toLowerCase()
-      : rule.value;
-    return text === normalized || text === rule.value;
-  }
+  // channel — точний збіг ID (без урахування регістру, якщо правило так налаштоване)
+  if (rule.scope === 'channel') return text === value;
 
   // title / description — пошук підрядка
   return text.includes(value);

@@ -1,6 +1,7 @@
 import { createProxyTable } from '../proxy/manager';
 import { createFilterTable } from '../filters/index';
 import { getDb } from './init';
+import { createLogger } from '../logger';
 
 export function migrate004(): void {
   createProxyTable();
@@ -9,7 +10,7 @@ export function migrate004(): void {
   const db = getDb();
   db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '4')`).run();
 
-  console.log('✅ Migration 004 applied: proxies + filter_rules');
+  createLogger('migrate').info('migration 004 applied: proxies + filter_rules');
 }
 
 if (require.main === module) {

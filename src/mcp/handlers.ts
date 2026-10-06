@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createLogger } from '../logger';
 import { validateArgs } from './validation';
+import { getDb } from '../db/init';
 
 const log = createLogger('mcp');
 
@@ -699,7 +702,7 @@ function extractVideoId(input: string): string {
  * cookieHeader для youtube-transcript-plus, cookiePath для yt-dlp.
  */
 function profileOptsForVideo(videoYoutubeId: string): { cookieHeader?: string; cookiePath?: string } {
-  const row = require('../db/init').getDb().prepare(`
+  const row = getDb().prepare(`
     SELECT c.youtube_id AS channel_youtube_id FROM videos v
     JOIN channels c ON c.id = v.channel_id WHERE v.youtube_id = ?
   `).get(videoYoutubeId) as any;
@@ -1068,8 +1071,6 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'import_opml': {
-      const fs = require('fs');
-      const path = require('path');
       const resolved = path.resolve(args.file_path);
       if (!resolved.endsWith('.opml') && !resolved.endsWith('.xml')) {
         return err('Only .opml and .xml files are allowed');
@@ -1128,7 +1129,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'evaluate_video': {
-      const video = require('../db/init').getDb()
+      const video = getDb()
         .prepare('SELECT * FROM videos WHERE youtube_id = ?').get(extractVideoId(args.video_id)) as any;
       if (!video) return err(`Video ${args.video_id} not found in archive. Run sync first.`);
       const result = await evaluateVideo({
@@ -1149,7 +1150,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'evaluate_batch': {
-      const db3 = require('../db/init').getDb();
+      const db3 = getDb();
       const ids = (args.video_ids as string[]).map(extractVideoId);
       const rows = ids.map((id: string) => db3.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(id)).filter(Boolean) as any[];
       if (rows.length === 0) return err('No matching videos found in archive');
@@ -1173,7 +1174,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         cookiePath: profileOptsForVideo(videoId).cookiePath,
       });
       // Зберігаємо шлях в БД якщо відео є в архіві
-      const dbInst = require('../db/init').getDb();
+      const dbInst = getDb();
       const vid = dbInst.prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoId) as any;
       if (vid) {
         if (result.format === 'audio') {

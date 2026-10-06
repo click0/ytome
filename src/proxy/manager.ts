@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { getDb } from '../db/init';
 
 // =============================================
@@ -200,7 +201,6 @@ export async function checkProxyHealth(
   proxy: ProxyConfig,
   testUrl = 'https://www.youtube.com/robots.txt'
 ): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
-  const axios = (await import('axios')).default;
   const agent = await buildAgent(proxy);
   const start = Date.now();
 

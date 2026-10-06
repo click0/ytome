@@ -15,6 +15,11 @@ const log = createLogger('drive');
 
 const DB_PATH = process.env.DB_PATH || './storage/archive.db';
 
+/** Значення в лапках для мови запитів Drive (q) */
+function driveQuote(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function requireFolderId(folderId?: string): string {
   const id = folderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
   if (!id) {
@@ -38,7 +43,7 @@ async function uploadFile(opts: {
   const media = { mimeType: opts.mimeType, body };
 
   const existing = await drive.files.list({
-    q: `name='${opts.name.replace(/'/g, "\\'")}' and '${opts.folderId}' in parents and trashed=false`,
+    q: `name='${driveQuote(opts.name)}' and '${driveQuote(opts.folderId)}' in parents and trashed=false`,
     fields: 'files(id)',
   });
 
@@ -80,7 +85,8 @@ export async function backupDatabase(folderId?: string): Promise<{
     log.info({ name, sizeBytes, action: result.action }, 'database backed up to Drive');
     return { ...result, name, sizeBytes };
   } finally {
-    fs.unlinkSync(tmpPath);
+    // Windows: потік завантаження може ще тримати файл (EBUSY) — повторюємо
+    fs.rmSync(tmpPath, { force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -116,7 +122,7 @@ export async function listDriveFiles(folderId?: string): Promise<Array<{
   const targetFolder = requireFolderId(folderId);
   const drive = getDriveClient();
   const res = await drive.files.list({
-    q: `'${targetFolder}' in parents and trashed=false`,
+    q: `'${driveQuote(targetFolder)}' in parents and trashed=false`,
     fields: 'files(id, name, size, modifiedTime)',
     orderBy: 'modifiedTime desc',
     pageSize: 50,

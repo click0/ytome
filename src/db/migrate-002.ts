@@ -1,4 +1,5 @@
 import { getDb } from './init';
+import { createLogger } from '../logger';
 
 /**
  * Миграция 002: TODO (watch later) + комментарии
@@ -56,7 +57,7 @@ export function migrate002(): void {
     INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '2');
   `);
 
-  console.log('✅ Migration 002 applied: watch_later + comments');
+  createLogger('migrate').info('migration 002 applied: watch_later + comments');
 }
 
 if (require.main === module) {
