@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-10-06
+
 ### Added
 - `export_transcript`: транскрипт у локальний `.txt` (назва, канал, посилання; опційно
   таймкоди `[mm:ss]`), зокрема для відео поза архівом
@@ -19,6 +21,8 @@
 ### Changed
 - FreeBSD CI: кожен етап — окремий крок через `cpa.sh` (вхід `run` дії застарів)
 - dependabot не пропонує better-sqlite3 13: немає готових бінарників для Windows
+- Залежності: TypeScript 7, vitest 5, googleapis 182, @anthropic-ai/sdk 0.131,
+  @modelcontextprotocol/sdk 1.31, zod 4.6, axios 1.20, youtube-transcript-plus 2.0.3
 
 ## [0.90.0] - 2026-10-04
 
@@ -76,7 +80,8 @@
 
 - Перший публічний реліз
 
-[Unreleased]: https://github.com/click0/ytome/compare/v0.90...HEAD
+[Unreleased]: https://github.com/click0/ytome/compare/v0.95...HEAD
+[0.95.0]: https://github.com/click0/ytome/compare/v0.90...v0.95
 [0.90.0]: https://github.com/click0/ytome/compare/v0.85...v0.90
 [0.85.0]: https://github.com/click0/ytome/compare/v0.75...v0.85
 [0.80.0]: https://github.com/click0/ytome/compare/v0.75...v0.85
