@@ -11,6 +11,8 @@ import { useTempStorage, initTestDb, seedChannel, seedVideo, cleanup } from './h
 const m = vi.hoisted(() => ({
   getChannelInfo: vi.fn(),
   fetchTranscript: vi.fn(),
+  fetchTranscriptOfflineFirst: vi.fn(),
+  realOfflineFirst: undefined as any,
   fetchTopComments: vi.fn(),
   fetchChannelOwnerComments: vi.fn(),
   checkChannel: vi.fn(),
@@ -21,11 +23,16 @@ const m = vi.hoisted(() => ({
   checkAllProviders: vi.fn(),
 }));
 
-vi.mock('../src/youtube/api', async (orig) => ({
-  ...(await orig<typeof import('../src/youtube/api')>()),
+vi.mock('../src/youtube/api', async (orig) => {
+  const real = await orig<typeof import('../src/youtube/api')>();
+  m.realOfflineFirst = real.fetchTranscriptOfflineFirst;
+  return {
+  ...real,
   getChannelInfo: m.getChannelInfo,
   fetchTranscript: m.fetchTranscript,
-}));
+  fetchTranscriptOfflineFirst: m.fetchTranscriptOfflineFirst,
+  };
+});
 vi.mock('../src/youtube/comments', () => ({
   fetchTopComments: m.fetchTopComments,
   fetchChannelOwnerComments: m.fetchChannelOwnerComments,
@@ -44,7 +51,11 @@ vi.mock('../src/youtube/music', async (orig) => ({
   fetchPlaylistTracks: m.fetchPlaylistTracks,
 }));
 vi.mock('../src/ai/balancer', () => ({
-  ask: async () => ({ text: 'summary' }),
+  // JSON-запити — підсумки транскриптів, решта — текст
+  ask: async (req: { json?: boolean }) => req.json
+    ? { provider: 'mock:ai', text: JSON.stringify({
+      tldr: 'TLDR', key_points: ['k1'], chapters: [{ time: '00:00', title: 'Start' }] }) }
+    : { provider: 'mock:ai', text: 'summary' },
   askJSON: async () => null,
   getMode: () => process.env.BALANCER_MODE || 'priority',
   getRoutingInfo: () => ({ mode: 'priority', proxy: { status: 'off' }, routes: {} }),
@@ -87,7 +98,9 @@ beforeAll(async () => {
 afterAll(() => cleanup(tmp, init.closeDb));
 
 beforeEach(() => {
-  for (const fn of Object.values(m)) fn.mockReset();
+  for (const fn of Object.values(m)) if (vi.isMockFunction(fn)) fn.mockReset();
+  // за замовчуванням — справжній offline-first (кеш у БД); тести підмінюють за потреби
+  m.fetchTranscriptOfflineFirst.mockImplementation((...a: any[]) => m.realOfflineFirst(...a));
 });
 
 describe('dispatch', () => {
@@ -423,5 +436,48 @@ describe('media library', () => {
   it('unknown channel → error; rebuild requires confirm', async () => {
     expect((await call('library_export', { channel: '@nobody' })).error).toMatch(/Channel not found/);
     expect((await call('library_rebuild', {})).error).toMatch(/confirm/);
+  });
+});
+
+describe('AI summaries', () => {
+  it('summarize_video: chapters with links, then from the archive; feed shows the TL;DR', async () => {
+    m.fetchTranscriptOfflineFirst.mockResolvedValueOnce({
+      text: 'Hello world', segments: [{ start: 0, dur: 1, text: 'Hello world' }], language: 'en', source: 'local:youtube' });
+    const r = await call('summarize_video', { video_id: 'https://youtu.be/vidAlpha001', language: 'en' });
+    expect(r.data).toMatchObject({
+      video_id: 'vidAlpha001', cached: false, saved: true, language: 'en', provider: 'mock:ai',
+      tldr: 'TLDR', key_points: ['k1'],
+      chapters: [{ time: '00:00', title: 'Start', url: 'https://youtube.com/watch?v=vidAlpha001&t=0s' }],
+    });
+    expect(r.data.text).toBe('TLDR\n\n• k1\n\n[00:00] Start');
+    expect((await call('summarize_video', { video_id: 'vidAlpha001', language: 'en' })).data.cached).toBe(true);
+
+    const feed = await call('get_feed', { since: '1w' });
+    expect(feed.data.videos.find((v: any) => v.id === 'vidAlpha001').tldr).toBe('TLDR');
+    expect(feed.data.videos.find((v: any) => v.id === 'vidAlpha002').tldr).toBeNull();
+  });
+
+  it('summarize_video: transcript problems come back with the reason; bad language rejected', async () => {
+    m.fetchTranscriptOfflineFirst.mockRejectedValueOnce(new TranscriptUnavailableError('vidBeta0001', 'blocked', 'IP blocked'));
+    expect((await call('summarize_video', { video_id: 'vidBeta0001' })).error).toMatch(/\[blocked\] IP blocked/);
+    expect((await call('summarize_video', { video_id: 'vidBeta0001', language: '../x' })).error).toMatch(/ISO code/);
+  });
+
+  it('summary_auto / summary_run / digest', async () => {
+    expect((await call('summary_auto', { channel: '@nobody', enabled: true })).error).toMatch(/Channel not found/);
+    // у Beta одне відео без підсумку; у Alpha — shorts і вже підсумоване
+    const on = await call('summary_auto', { channel: 'UCbeta', enabled: true });
+    expect(on.data).toMatchObject({ success: true, channel: 'Beta', auto_summary: true, pending: 1 });
+
+    m.fetchTranscriptOfflineFirst.mockResolvedValue({ text: 'Short', segments: [], language: 'en', source: 'x' });
+    expect((await call('summary_run', { limit: 5 })).data).toEqual({ processed: 1, summarized: 1, retry: 0, skipped: 0 });
+    expect((await call('summary_auto', { channel: 'UCbeta', enabled: false })).data.pending).toBeUndefined();
+
+    const d = await call('digest', { since: '1m' });
+    expect(d.data).toMatchObject({ channels: 2, videos: 3, without_summary: 1 });
+    expect(d.data.markdown).toContain('TLDR');
+    expect(fs.existsSync(d.data.path)).toBe(true);
+    expect((await call('digest', { channel: '@nobody' })).error).toMatch(/Channel not found/);
+    expect((await call('digest', { channel: '@alpha' })).data.videos).toBe(0); // за 1 день — нічого
   });
 });

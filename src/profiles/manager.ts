@@ -118,3 +118,23 @@ export function assignChannelProfile(channelYoutubeId: string, profileId: number
     .run(profileId, channelYoutubeId);
   return res.changes > 0;
 }
+
+/**
+ * Опції транскрипту/завантаження з профілю каналу відео:
+ * cookieHeader для youtube-transcript-plus, cookiePath для yt-dlp.
+ */
+export function profileOptsForVideo(videoYoutubeId: string): { cookieHeader?: string; cookiePath?: string } {
+  const row = getDb().prepare(`
+    SELECT c.youtube_id AS channel_youtube_id FROM videos v
+    JOIN channels c ON c.id = v.channel_id WHERE v.youtube_id = ?
+  `).get(videoYoutubeId) as { channel_youtube_id: string } | undefined;
+
+  const profile = resolveProfileForChannel(row?.channel_youtube_id ?? '');
+  if (!profile) return {};
+
+  const cookieHeader = getProfileCookieHeader(profile);
+  return {
+    cookieHeader: cookieHeader || undefined,
+    cookiePath: profile.cookie_path ?? undefined,
+  };
+}

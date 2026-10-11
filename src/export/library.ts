@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init';
 import { downloadThumbnail } from '../youtube/api';
+import { getSummaryText } from '../summary/index';
 import { createLogger } from '../logger';
 import {
   buildShowNfo, buildEpisodeNfo, episodeBaseName, sanitizeFilename, seasonOf,
@@ -219,7 +220,7 @@ export async function exportLibrary(opts: {
         const seasonDir = path.join(showDir, `Season ${seasonOf(v.published_at)}`);
         fs.mkdirSync(seasonDir, { recursive: true });
 
-        const video: NfoVideo = v;
+        const video: NfoVideo = { ...v, summary: getSummaryText(v.youtube_id) };
         const dayIndex = dayIndexes.get(v.youtube_id) || 1;
         const base = episodeBaseName(channel.name, video, dayIndex);
 

@@ -8,6 +8,7 @@ import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { parseSqliteTime } from '../db/time';
+import { processSummaryQueue } from '../summary/index';
 import { createLogger } from '../logger';
 
 dotenv.config({ quiet: true });
@@ -156,10 +157,26 @@ export function startScheduler(): void {
   cron.schedule(CHECK_INTERVAL, async () => {
     log.info('running scheduled check');
     await checkAllChannels();
+    await runAutoSummaries();
   });
 
   // Первая проверка сразу при запуске
-  checkAllChannels().catch(e => log.error({ error: e.message }, 'initial check failed'));
+  checkAllChannels()
+    .then(runAutoSummaries)
+    .catch(e => log.error({ error: e.message }, 'initial check failed'));
+}
+
+/**
+ * Підсумки нових відео з каналів з auto_summary. Квоту YouTube Data API не
+ * витрачає (транскрипти йдуть не через неї), тож працює і при вичерпаній квоті.
+ */
+export async function runAutoSummaries(): Promise<void> {
+  if (process.env.AUTO_SUMMARY === 'false') return;
+  try {
+    await processSummaryQueue();
+  } catch (e: any) {
+    log.error({ error: e.message }, 'summary queue failed');
+  }
 }
 
 function sleep(ms: number): Promise<void> {

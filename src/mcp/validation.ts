@@ -360,6 +360,32 @@ export const libraryRebuildSchema = z.object({
 // Маппінг: tool name → schema
 // =============================================
 
+// =============================================
+// AI-підсумки транскриптів
+// =============================================
+
+const languageCode = z.string().regex(/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/, 'language: ISO code like uk, en, pt-BR');
+
+export const summarizeVideoSchema = z.object({
+  video_id: videoIdOrUrl,
+  language: languageCode.optional(),
+  force:    z.boolean().optional(),
+});
+
+export const summaryAutoSchema = z.object({
+  channel: channelIdOrHandle,
+  enabled: z.boolean(),
+});
+
+export const summaryRunSchema = z.object({
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export const digestSchema = z.object({
+  since:   z.string().optional(),
+  channel: z.string().optional(),
+});
+
 export const SCHEMAS: Record<string, z.ZodType> = {
   subscribe:          subscribeSchema,
   list_subscriptions: listSubscriptionsSchema,
@@ -421,6 +447,11 @@ export const SCHEMAS: Record<string, z.ZodType> = {
 
   library_export:  libraryExportSchema,
   library_rebuild: libraryRebuildSchema,
+
+  summarize_video: summarizeVideoSchema,
+  summary_auto:    summaryAutoSchema,
+  summary_run:     summaryRunSchema,
+  digest:          digestSchema,
 };
 
 /**

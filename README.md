@@ -155,6 +155,7 @@ node dist/db/migrate-003.js
 node dist/db/migrate-004.js
 node dist/db/migrate-005.js
 node dist/db/migrate-006.js
+node dist/db/migrate-007.js   # optional: summaries also create their tables on first use
 ```
 
 > After successful execution, `storage/archive.db` will be created — this file **is** your archive.
@@ -253,6 +254,19 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 | `analyze_transcript` | Transcript + AI analysis (summary / key_points / quotes / full) |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`. Cached locally |
 | `download` | Download via yt-dlp. `format`: audio / video / video_hd |
+
+### AI Summaries
+| Tool | Description |
+|------|-------------|
+| `summarize_video` | TL;DR, key points and chapters with `[mm:ss]` links from the transcript; stored in the archive. `language`, `force` |
+| `summary_auto` | Turn automatic summaries on/off for a channel — the scheduler summarizes its new videos after each sync |
+| `summary_run` | Process the auto-summary queue now. `limit` |
+| `digest` | Markdown digest of new videos with summaries, grouped by channel (`storage/exports/digests/`). `since`, `channel` |
+
+Summaries go through the AI balancer (`BALANCER_MODE`; local Ollama works), long videos are summarized in parts (map-reduce).
+The TL;DR also appears in `get_feed`, and the summary goes into the `.nfo` plot of the media library.
+Shorts and videos shorter than `SUMMARY_MIN_DURATION_SEC` are skipped; transcript failures are retried with a growing delay,
+"no captions" is not retried. Settings: `SUMMARY_LANGUAGE`, `SUMMARY_DAILY_LIMIT`, `AUTO_SUMMARY` (see `.env.example`).
 
 ### Cache & Offline
 | Tool | Description |

@@ -266,6 +266,20 @@ If the server is connected, Claude will see the `ytome` tools and respond (with 
 | `analyze_transcript` | Fetch transcript + analysis instruction (summary/key_points/quotes/full) |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`, `with_replies` |
 
+### AI Summaries
+
+| Tool | Description |
+|------|-------------|
+| `summarize_video` | TL;DR, key points and chapters with `[mm:ss]` links from the transcript; stored in the archive. `language`, `force` |
+| `summary_auto` | Turn automatic summaries on/off for a channel — the scheduler summarizes its new videos after each sync |
+| `summary_run` | Process the auto-summary queue now. `limit` |
+| `digest` | Markdown digest of new videos with summaries, grouped by channel (`storage/exports/digests/`). `since`, `channel` |
+
+Summaries go through the AI balancer (`BALANCER_MODE`; local Ollama works), long videos are summarized in parts (map-reduce).
+The TL;DR shows up in `get_feed`, and the summary goes into the `.nfo` plot of the media library. Shorts and videos shorter
+than `SUMMARY_MIN_DURATION_SEC` are skipped; transcript failures are retried with a growing delay, "no captions" is not.
+Settings: `SUMMARY_LANGUAGE`, `SUMMARY_DAILY_LIMIT`, `AUTO_SUMMARY` (see `.env.example`).
+
 ### Export / Import
 
 | Tool | Description |
