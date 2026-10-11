@@ -5,7 +5,18 @@
 
 ## [Unreleased]
 
+### Added
+- AI-підсумки транскриптів: `summarize_video` — TL;DR, ключові тези, розділи з таймкодами
+  й посиланнями; довгі відео — частинами (map-reduce); зберігаються в архіві
+- Автопідсумки: `summary_auto` для каналу — планувальник підсумовує нові відео після
+  синхронізації; збої транскрипту (блок IP, AI недоступний) повторюються з паузою,
+  «немає субтитрів» — ні; денний ліміт `SUMMARY_DAILY_LIMIT`; `summary_run` — вручну
+- `digest`: Markdown-дайджест нових відео з підсумками за каналами
+- TL;DR у `get_feed`; підсумок в описі `.nfo` медіабібліотеки (Jellyfin / Emby / Plex)
+
 ### Fixed
+- npm 12 за замовчуванням блокує install-скрипти — better-sqlite3 не збирався
+  (`Could not locate the bindings file`); дозвіл у `allowScripts` у package.json
 - `get_comments` і `cache_status` падали для будь-якого відео з архіву (запит до
   неіснуючої колонки); метадані в кеші завжди вважались застарілими
 - `watch_later_list` з `overdue: true` падав з помилкою SQL

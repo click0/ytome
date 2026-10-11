@@ -29,15 +29,19 @@ import { checkAllProviders } from '../ai/providers';
 import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp } from '../youtube/ytdlp';
 import { addFilterRule, removeFilterRule, setFilterEnabled, listFilterRules, clearFilterRules } from '../filters/index';
 import { getQuotaStatus, getQuotaHistory, getQuotaBreakdown, QUOTA_COSTS } from '../db/quota';
-import { addProfile, removeProfile, listProfiles, setDefaultProfile, assignChannelProfile, resolveProfileForChannel, getProfileCookieHeader } from '../profiles/manager';
+import { addProfile, removeProfile, listProfiles, setDefaultProfile, assignChannelProfile, profileOptsForVideo } from '../profiles/manager';
 import { googleAuthAvailable } from '../google/auth';
 import { backupDatabase, exportTranscriptToDrive, listDriveFiles } from '../google/drive';
 import { exportSubscriptionsToSheet, exportWatchLaterToSheet, exportStatsToSheet, listSheetExports } from '../google/sheets';
 import { extractPlaylistId, fetchPlaylistInfo, fetchPlaylistTracks } from '../youtube/music';
 import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlaylist, saveMusicTracks, getMusicTracks } from '../db/queries-music';
 import { exportLibrary } from '../export/library';
-import { exportTranscriptToFile } from '../export/transcript';
+import { exportTranscriptToFile, formatTimestamp } from '../export/transcript';
 import { TranscriptUnavailableError } from '../youtube/transcript-errors';
+import {
+  summarizeVideo, setChannelAutoSummary, pendingSummaries, processSummaryQueue, buildDigest,
+  getTldrs, summaryAsText, chapterLink,
+} from '../summary/index';
 
 
 // =============================================
@@ -134,6 +138,53 @@ export const TOOLS: Tool[] = [
         force_refresh: { type: 'boolean', description: 'Ігнорувати кеш і завантажити заново' },
       },
       required: ['video_id'],
+    },
+  },
+  {
+    name: 'summarize_video',
+    description: 'AI-підсумок відео за транскриптом: TL;DR, ключові тези, розділи з таймкодами й посиланнями. ' +
+      'Зберігається в архіві (повторний виклик — з кешу). Модель — через AI-балансувальник (BALANCER_MODE)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_id: { type: 'string', description: 'YouTube video ID або URL' },
+        language: { type: 'string', description: 'Мова підсумку (uk, en…). Пусто = SUMMARY_LANGUAGE' },
+        force:    { type: 'boolean', description: 'Перегенерувати, навіть якщо підсумок уже є' },
+      },
+      required: ['video_id'],
+    },
+  },
+  {
+    name: 'summary_auto',
+    description: 'Увімкнути/вимкнути автоматичні підсумки нових відео каналу (планувальник робить їх після синхронізації)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel ID або @handle' },
+        enabled: { type: 'boolean' },
+      },
+      required: ['channel', 'enabled'],
+    },
+  },
+  {
+    name: 'summary_run',
+    description: 'Обробити чергу автопідсумків зараз (не чекаючи планувальника). Ліміт на день — SUMMARY_DAILY_LIMIT',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Скільки відео обробити (за замовчуванням — до денного ліміту)' },
+      },
+    },
+  },
+  {
+    name: 'digest',
+    description: 'Дайджест нових відео з підсумками, згрупований за каналами. Markdown + файл у storage/exports/digests/',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        since:   { type: 'string', description: '1d / 1w / 1m або дата ISO. За замовчуванням 1d' },
+        channel: { type: 'string', description: 'Лише цей канал (ID або @handle)' },
+      },
     },
   },
   {
@@ -697,24 +748,9 @@ function extractVideoId(input: string): string {
   return urlMatch ? urlMatch[1] : input;
 }
 
-/**
- * Опції транскрипту/завантаження з профілю каналу відео:
- * cookieHeader для youtube-transcript-plus, cookiePath для yt-dlp.
- */
-function profileOptsForVideo(videoYoutubeId: string): { cookieHeader?: string; cookiePath?: string } {
-  const row = getDb().prepare(`
-    SELECT c.youtube_id AS channel_youtube_id FROM videos v
-    JOIN channels c ON c.id = v.channel_id WHERE v.youtube_id = ?
-  `).get(videoYoutubeId) as any;
-
-  const profile = resolveProfileForChannel(row?.channel_youtube_id ?? '');
-  if (!profile) return {};
-
-  const cookieHeader = getProfileCookieHeader(profile);
-  return {
-    cookieHeader: cookieHeader || undefined,
-    cookiePath: profile.cookie_path ?? undefined,
-  };
+/** Канал з архіву за ID або @handle */
+function findChannel(idOrHandle: string): any {
+  return getChannel(idOrHandle) || getChannels().find((c: any) => c.handle === idOrHandle);
 }
 
 function buildBar(percent: number): string {
@@ -795,6 +831,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       if (args.unseen_only) {
         videos = videos.filter((v: any) => !v.is_seen);
       }
+      const tldrs = getTldrs(videos.map((v: any) => v.youtube_id));
 
       return ok({
         since,
@@ -810,6 +847,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
           seen: !!v.is_seen,
           url: `https://youtube.com/watch?v=${v.youtube_id}`,
           has_transcript: hasTranscript(v.youtube_id),
+          tldr: tldrs.get(v.youtube_id) ?? null,
         })),
       });
     }
@@ -891,6 +929,58 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       } catch (e) {
         return transcriptErr(e);
       }
+    }
+
+    case 'summarize_video': {
+      const videoId = extractVideoId(args.video_id);
+      let r;
+      try {
+        r = await summarizeVideo(videoId, { language: args.language, force: args.force });
+      } catch (e) {
+        return transcriptErr(e);
+      }
+      const s = r.summary;
+      return ok({
+        video_id: videoId,
+        cached: r.cached,
+        saved: r.saved,
+        ...(r.saved ? {} : { note: 'Відео поза архівом — підсумок не збережено' }),
+        language: s.language,
+        provider: s.provider,
+        tldr: s.tldr,
+        key_points: s.key_points,
+        chapters: s.chapters.map(c => ({
+          time: c.start === null ? null : formatTimestamp(c.start),
+          title: c.title,
+          url: chapterLink(videoId, c.start),
+        })),
+        text: summaryAsText(s),
+      });
+    }
+
+    case 'summary_auto': {
+      const channel = findChannel(args.channel);
+      if (!channel) return err(`Channel not found: ${args.channel}`);
+      setChannelAutoSummary(channel.youtube_id, args.enabled);
+      return ok({
+        success: true, channel: channel.name, auto_summary: args.enabled,
+        pending: args.enabled ? pendingSummaries(1000).length : undefined,
+      });
+    }
+
+    case 'summary_run': {
+      return ok(await processSummaryQueue({ limit: args.limit }));
+    }
+
+    case 'digest': {
+      let channelYoutubeId: string | undefined;
+      if (args.channel) {
+        const channel = findChannel(args.channel);
+        if (!channel) return err(`Channel not found: ${args.channel}`);
+        channelYoutubeId = channel.youtube_id;
+      }
+      const d = buildDigest({ since: parseSince(args.since || '1d'), channelYoutubeId });
+      return ok(d);
     }
 
     case 'analyze_transcript': {

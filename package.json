@@ -5,6 +5,9 @@
   "engines": {
     "node": ">=20"
   },
+  "allowScripts": {
+    "better-sqlite3": true
+  },
   "main": "dist/mcp/index.js",
   "scripts": {
     "build": "tsc",

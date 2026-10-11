@@ -163,3 +163,21 @@ describe('checkAllChannels', () => {
     expect(net.getChannelVideos).not.toHaveBeenCalled();
   });
 });
+
+describe('runAutoSummaries', () => {
+  const summaryRows = () => (init.getDb().prepare('SELECT COUNT(*) AS n FROM summaries').get() as any).n;
+
+  it('is off with AUTO_SUMMARY=false; otherwise processes the queue without throwing', async () => {
+    const { setChannelAutoSummary } = await import('../src/summary/index');
+    setChannelAutoSummary('UCs', true);
+
+    process.env.AUTO_SUMMARY = 'false';
+    await s.runAutoSummaries();
+    expect(summaryRows()).toBe(0);
+
+    delete process.env.AUTO_SUMMARY;
+    await s.runAutoSummaries(); // транскрипт тут недоступний → відео лягають у повтор, не виняток
+    expect(summaryRows()).toBeGreaterThan(0);
+    expect(init.getDb().prepare("SELECT COUNT(*) AS n FROM summaries WHERE status = 'ok'").get()).toEqual({ n: 0 });
+  });
+});

@@ -28,6 +28,7 @@ export async function initTestDb() {
   (await import('../../src/db/migrate-004')).migrate004();
   (await import('../../src/db/migrate-005')).migrate005();
   (await import('../../src/db/migrate-006')).migrate006();
+  (await import('../../src/db/migrate-007')).migrate007();
   return init;
 }
 
@@ -44,12 +45,16 @@ export function seedChannel(
 export function seedVideo(
   db: import('better-sqlite3').Database,
   channelId: number,
-  v: { youtube_id: string; title: string; published_at: string; type?: 'video' | 'short'; description?: string },
+  v: {
+    youtube_id: string; title: string; published_at: string;
+    type?: 'video' | 'short'; description?: string; duration_sec?: number;
+  },
 ): number {
   return (db.prepare(`
-    INSERT INTO videos (youtube_id, channel_id, title, description, published_at, type)
-    VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-  `).get(v.youtube_id, channelId, v.title, v.description ?? null, v.published_at, v.type ?? 'video') as { id: number }).id;
+    INSERT INTO videos (youtube_id, channel_id, title, description, published_at, type, duration_sec)
+    VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+  `).get(v.youtube_id, channelId, v.title, v.description ?? null, v.published_at, v.type ?? 'video',
+    v.duration_sec ?? null) as { id: number }).id;
 }
 
 export function cleanup(tmp: string, closeDb?: () => void): void {

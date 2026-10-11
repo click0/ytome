@@ -22,6 +22,7 @@ npm test
 - **Filters**: `src/filters/` — whitelist/blacklist engine
 - **Scheduler**: `src/scheduler/` — cron-based channel checking; RSS detection (`src/youtube/rss.ts`) for already-synced channels, `search.list` only for first sync
 - **Transcripts**: `fetchTranscript` in `src/youtube/api.ts` throws `TranscriptUnavailableError` with a reason (`src/youtube/transcript-errors.ts`); fetch hooks must return Response-like objects (ok/status/text/json); `src/export/transcript.ts` writes `.txt`
+- **AI summaries**: `src/summary/` — `summarize.ts` (chunks with `[mm:ss]` marks → map-reduce via `ask()`, PROMPT_VERSION invalidates stored summaries), `index.ts` (table `summaries`, queue for channels with `auto_summary`, retry/skip by `TranscriptUnavailableError` reason, digest); run by the scheduler after each check (`runAutoSummaries`)
 - **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
 - **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel)
 - **Validation**: `src/mcp/validation.ts` — Zod schemas for all MCP tool inputs
@@ -32,8 +33,9 @@ SQLite singleton via `getDb()` from `src/db/init.ts`. Never call `db.close()` ma
 
 Timestamps from `CURRENT_TIMESTAMP` are UTC without a zone — parse with `parseSqliteTime()` (`src/db/time.ts`), never `new Date(row.x)`.
 
-Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
-(005: profiles + music tables, 006: sheet_exports).
+Migrations: `src/db/migrate-002.ts` through `migrate-007.ts`
+(005: profiles + music tables, 006: sheet_exports, 007: summaries + `channels.auto_summary` —
+applied lazily by `ensureSummarySchema()`).
 
 ## Key conventions
 
@@ -48,7 +50,7 @@ Migrations: `src/db/migrate-002.ts` through `migrate-006.ts`
 ## Testing
 
 ```bash
-npm test               # vitest run (304 tests)
+npm test               # vitest run (325 tests)
 npm run test:watch
 npm run test:coverage  # + coverage report; thresholds in vitest.config.mts (CI fails below them)
 npm run smoke          # build + smoke test of both MCP transports

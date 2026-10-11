@@ -19,6 +19,7 @@ export interface NfoVideo {
   published_at: string;
   duration_sec?: number | null;
   tags?: string | null;          // JSON-масив з БД
+  summary?: string | null;       // AI-підсумок транскрипту (TL;DR, тези, розділи)
 }
 
 export function escapeXml(s: string): string {
@@ -87,6 +88,12 @@ export function buildShowNfo(channel: NfoChannel): string {
   return lines.filter(Boolean).join('\n') + '\n';
 }
 
+/** Опис епізоду: AI-підсумок (якщо є) над оригінальним описом */
+function episodePlot(video: NfoVideo): string | null {
+  const parts = [video.summary, video.description].filter(p => p && p.trim());
+  return parts.length ? parts.join('\n\n———\n\n') : null;
+}
+
 export function buildEpisodeNfo(channel: NfoChannel, video: NfoVideo, dayIndex: number): string {
   const season = seasonOf(video.published_at);
   const episode = episodeOf(video.published_at, dayIndex);
@@ -100,7 +107,7 @@ export function buildEpisodeNfo(channel: NfoChannel, video: NfoVideo, dayIndex: 
     `  <showtitle>${escapeXml(channel.name)}</showtitle>`,
     `  <season>${season}</season>`,
     `  <episode>${episode}</episode>`,
-    video.description ? `  <plot>${escapeXml(video.description)}</plot>` : '',
+    episodePlot(video) ? `  <plot>${escapeXml(episodePlot(video)!)}</plot>` : '',
     `  <aired>${aired}</aired>`,
     `  <premiered>${aired}</premiered>`,
     runtimeMin ? `  <runtime>${runtimeMin}</runtime>` : '',

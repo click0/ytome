@@ -266,6 +266,20 @@ Linux:    ~/.config/Claude/claude_desktop_config.json
 | `analyze_transcript` | Завантажити транскрипцію + вказівка для аналізу (summary/key_points/quotes/full) |
 | `get_comments` | Топ коментарі. Параметри: `limit`, `owner_only`, `with_replies` |
 
+### AI-підсумки
+
+| Інструмент | Опис |
+|------------|------|
+| `summarize_video` | TL;DR, ключові тези й розділи з посиланнями `[mm:ss]` за транскриптом; зберігається в архіві. `language`, `force` |
+| `summary_auto` | Увімкнути/вимкнути автопідсумки каналу — планувальник підсумовує нові відео після синхронізації |
+| `summary_run` | Обробити чергу автопідсумків зараз. `limit` |
+| `digest` | Markdown-дайджест нових відео з підсумками за каналами (`storage/exports/digests/`). `since`, `channel` |
+
+Підсумки йдуть через AI-балансувальник (`BALANCER_MODE`; підходить локальна Ollama), довгі відео — частинами (map-reduce).
+TL;DR видно в `get_feed`, підсумок потрапляє в опис `.nfo` медіабібліотеки. Shorts і відео коротші за
+`SUMMARY_MIN_DURATION_SEC` пропускаються; збої транскрипту повторюються з паузою, що росте, «немає субтитрів» — ні.
+Налаштування: `SUMMARY_LANGUAGE`, `SUMMARY_DAILY_LIMIT`, `AUTO_SUMMARY` (див. `.env.example`).
+
 ### Експорт / Імпорт
 
 | Інструмент | Опис |
