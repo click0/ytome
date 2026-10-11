@@ -15,6 +15,8 @@
 - TL;DR у `get_feed`; підсумок в описі `.nfo` медіабібліотеки (Jellyfin / Emby / Plex)
 
 ### Fixed
+- npm 12 за замовчуванням блокує install-скрипти — better-sqlite3 не збирався
+  (`Could not locate the bindings file`); дозвіл у `allowScripts` у package.json
 - `get_comments` і `cache_status` падали для будь-якого відео з архіву (запит до
   неіснуючої колонки); метадані в кеші завжди вважались застарілими
 - `watch_later_list` з `overdue: true` падав з помилкою SQL
