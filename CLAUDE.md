@@ -15,7 +15,7 @@ npm test
 - **MCP server**: `src/mcp/` — stdio (Claude Desktop) + HTTP/SSE (claude.ai), 50+ tools
 - **YouTube API**: `src/youtube/` — Data API v3, transcript (youtube-transcript-plus), yt-dlp
 - **Database**: `src/db/` — SQLite via better-sqlite3, singleton connection (WAL mode)
-- **AI balancer**: `src/ai/` — Claude, Ollama, Groq, OpenRouter, LM Studio with fallback
+- **AI balancer**: `src/ai/` — Claude, Ollama, Groq, OpenRouter, LM Studio with fallback. Claude is routed by tier (`fast`/`balanced`/`top` → `claudeModel()`, defaults Haiku 5.5 / Sonnet 5.5 / Opus 5.5, `CLAUDE_MODEL_*` overrides); model ids, prices and capabilities live only in `MODEL_INFO` in `src/ai/claude.ts`. Calls go through `client.beta.messages` (server-side fallback), `effort` by task complexity, `schema` → structured outputs
 - **Proxy**: `src/proxy/` — HTTP/HTTPS/SOCKS5 rotation, async ESM agents
 - **Evaluation**: `src/evaluation/` — video scoring 0-100, AI stubs marked TODO
 - **Cache**: `src/cache/` — offline-first resolver (DB → files → network)
@@ -50,7 +50,7 @@ applied lazily by `ensureSummarySchema()`).
 ## Testing
 
 ```bash
-npm test               # vitest run (325 tests)
+npm test               # vitest run (330 tests)
 npm run test:watch
 npm run test:coverage  # + coverage report; thresholds in vitest.config.mts (CI fails below them)
 npm run smoke          # build + smoke test of both MCP transports

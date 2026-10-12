@@ -12,7 +12,7 @@
  */
 
 import axios from 'axios';
-import { askClaude, claudeAvailable, ClaudeModel } from './claude';
+import { askClaude, claudeAvailable, claudeModel, type ClaudeTier, type ClaudeEffort } from './claude';
 import { askProvider, loadProviderConfigs, ProviderName } from './providers';
 import { getDb } from '../db/init';
 import { createLogger } from '../logger';
@@ -32,6 +32,8 @@ export interface AIRequest {
   prompt:      string;
   maxTokens?:  number;
   json?:       boolean;
+  /** JSON Schema відповіді: Claude гарантує формат (structured outputs), інші — JSON mode */
+  schema?:     Record<string, unknown>;
   tag?:        string;
 }
 
@@ -44,7 +46,7 @@ export interface AIResponse {
 
 type RouteStep =
   | { type: 'provider'; name: ProviderName }
-  | { type: 'claude';   model: ClaudeModel };
+  | { type: 'claude';   tier: ClaudeTier };
 
 // =============================================
 // Вартість провайдерів (менше = дешевше)
@@ -52,24 +54,29 @@ type RouteStep =
 // =============================================
 
 const COST_RANK: Record<string, number> = {
-  'ollama':                           0,  // локально, безкоштовно
-  'lmstudio':                         0,  // локально, безкоштовно
-  'groq':                             1,  // безкоштовний хмарний tier
-  'openrouter':                       2,  // є безкоштовні моделі
-  'claude:claude-haiku-4-5-20251001': 3,  // дешевий Claude
-  'claude:claude-sonnet-4-6':         4,
-  'claude:claude-opus-4-6':           5,
+  'ollama':          0,  // локально, безкоштовно
+  'lmstudio':        0,  // локально, безкоштовно
+  'groq':            1,  // безкоштовний хмарний tier
+  'openrouter':      2,  // є безкоштовні моделі
+  'claude:fast':     3,  // Haiku — найдешевший Claude
+  'claude:balanced': 4,  // Sonnet
+  'claude:top':      5,  // Opus
 };
 
 /** Мінімальна складність яку провайдер здатен обробляти надійно */
 const MIN_COMPLEXITY: Record<string, TaskComplexity> = {
-  'ollama':                           'simple',
-  'lmstudio':                         'simple',
-  'groq':                             'simple',
-  'openrouter':                       'simple',
-  'claude:claude-haiku-4-5-20251001': 'simple',
-  'claude:claude-sonnet-4-6':         'medium',
-  'claude:claude-opus-4-6':           'complex',
+  'ollama':          'simple',
+  'lmstudio':        'simple',
+  'groq':            'simple',
+  'openrouter':      'simple',
+  'claude:fast':     'simple',
+  'claude:balanced': 'medium',
+  'claude:top':      'complex',
+};
+
+/** Глибина роздумів Claude за складністю задачі */
+const CLAUDE_EFFORT: Record<TaskComplexity, ClaudeEffort> = {
+  simple: 'low', medium: 'medium', complex: 'high', critical: 'high',
 };
 
 const COMPLEXITY_LEVEL: Record<TaskComplexity, number> = {
@@ -80,8 +87,14 @@ const COMPLEXITY_LEVEL: Record<TaskComplexity, number> = {
 // Утиліти
 // =============================================
 
+/** Ключ для рангів/обмежень: claude:<рівень> */
 function stepKey(s: RouteStep): string {
-  return s.type === 'claude' ? `claude:${s.model}` : s.name;
+  return s.type === 'claude' ? `claude:${s.tier}` : s.name;
+}
+
+/** Назва для логів і статистики: claude:<модель> */
+function stepLabel(s: RouteStep): string {
+  return s.type === 'claude' ? `claude:${claudeModel(s.tier)}` : s.name;
 }
 
 function stepAvailable(s: RouteStep): boolean {
@@ -101,9 +114,9 @@ function allSteps(): RouteStep[] {
     { type: 'provider', name: 'lmstudio'   },
     { type: 'provider', name: 'groq'       },
     { type: 'provider', name: 'openrouter' },
-    { type: 'claude',   model: 'claude-haiku-4-5-20251001' },
-    { type: 'claude',   model: 'claude-sonnet-4-6'         },
-    { type: 'claude',   model: 'claude-opus-4-6'           },
+    { type: 'claude',   tier: 'fast'     },
+    { type: 'claude',   tier: 'balanced' },
+    { type: 'claude',   tier: 'top'      },
   ];
 }
 
@@ -121,22 +134,23 @@ const PRIORITY_ROUTES: Record<TaskComplexity, RouteStep[]> = {
     { type: 'provider', name: 'lmstudio'   },
     { type: 'provider', name: 'groq'       },
     { type: 'provider', name: 'openrouter' },
-    { type: 'claude',   model: 'claude-haiku-4-5-20251001' },
+    { type: 'claude',   tier: 'fast'     },
   ],
   medium: [
     { type: 'provider', name: 'groq'       },
     { type: 'provider', name: 'openrouter' },
     { type: 'provider', name: 'ollama'     },
-    { type: 'claude',   model: 'claude-haiku-4-5-20251001' },
+    { type: 'claude',   tier: 'fast'     },
   ],
   complex: [
-    { type: 'claude',   model: 'claude-haiku-4-5-20251001' },
+    { type: 'claude',   tier: 'balanced' },
+    { type: 'claude',   tier: 'fast'     },
     { type: 'provider', name: 'openrouter' },
     { type: 'provider', name: 'groq'       },
   ],
   critical: [
-    { type: 'claude',   model: 'claude-sonnet-4-6'         },
-    { type: 'claude',   model: 'claude-haiku-4-5-20251001' },
+    { type: 'claude',   tier: 'top'      },
+    { type: 'claude',   tier: 'balanced' },
     { type: 'provider', name: 'openrouter' },
   ],
 };
@@ -207,8 +221,8 @@ function getProxyUrl(): string | null {
 /** Модель яку просити у зовнішнього роутера (можна overrideнути) */
 function getProxyModel(complexity: TaskComplexity): string {
   return process.env.AI_PROXY_MODEL
-    || (complexity === 'critical' ? 'claude-sonnet-4-6'
-      : complexity === 'complex'  ? 'claude-haiku-4-5-20251001'
+    || (complexity === 'critical' ? claudeModel('top')
+      : complexity === 'complex'  ? claudeModel('balanced')
       : 'auto');   // 'auto' — роутер сам вирішує (NadirClaw, claude-code-router)
 }
 
@@ -330,10 +344,11 @@ export async function ask(req: AIRequest): Promise<AIResponse> {
       if (step.type === 'claude') {
         const start    = Date.now();
         const res      = await askClaude({
-          model: step.model, system: req.system,
-          prompt: req.prompt, maxTokens: req.maxTokens, json: req.json,
+          model: claudeModel(step.tier), system: req.system,
+          prompt: req.prompt, maxTokens: req.maxTokens, json: req.json, schema: req.schema,
+          effort: CLAUDE_EFFORT[req.complexity],
         });
-        const provider = `claude:${step.model}`;
+        const provider = `claude:${res.model}`;
         log.info({ provider, latencyMs: Date.now()-start, costUsd: res.cost_usd, mode, tag }, 'claude response');
         logUsage(provider, tag, res.inputTokens, res.outputTokens, res.cost_usd);
         return { text: res.text, provider, cost_usd: res.cost_usd };
@@ -350,8 +365,8 @@ export async function ask(req: AIRequest): Promise<AIResponse> {
       return { text: res.text, provider, latency_ms: res.latency_ms };
 
     } catch (e: any) {
-      errors.push(`${stepKey(step)}: ${e.message}`);
-      log.warn({ step: stepKey(step), error: e.message, tag }, 'AI step failed');
+      errors.push(`${stepLabel(step)}: ${e.message}`);
+      log.warn({ step: stepLabel(step), error: e.message, tag }, 'AI step failed');
     }
   }
 
@@ -380,16 +395,15 @@ export function getRoutingInfo(): { mode: BalancerMode; proxy: { url?: string; m
   for (const c of complexities) {
     const queue  = buildCostQueue(c); // завжди cost для відображення
     routes[c]    = queue.map(s => {
-      const key  = stepKey(s);
-      const rank = COST_RANK[key] ?? 99;
-      const cost = ['0-free-local','1-free-cloud','2-paid-cheap','3-haiku','4-sonnet','5-opus'][rank] ?? 'paid';
-      return `✅ ${key} [${cost}]`;
+      const rank = COST_RANK[stepKey(s)] ?? 99;
+      const cost = ['0-free-local','1-free-cloud','2-paid-cheap','3-claude-fast','4-claude-balanced','5-claude-top'][rank] ?? 'paid';
+      return `✅ ${stepLabel(s)} [${cost}]`;
     });
 
     // Додаємо недоступні
     const unavailable = allSteps()
       .filter(s => !stepAvailable(s) && stepCanHandle(s, c))
-      .map(s => `⬜ ${stepKey(s)} (disabled)`);
+      .map(s => `⬜ ${stepLabel(s)} (disabled)`);
     routes[c].push(...unavailable);
   }
 

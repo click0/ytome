@@ -118,6 +118,9 @@ describe('summarizeTranscript', () => {
     expect(m.ask).toHaveBeenCalledTimes(1);
     const req = m.ask.mock.calls[0][0];
     expect(req).toMatchObject({ json: true, complexity: 'medium', tag: 'summary' });
+    // схема для structured outputs Claude: формат відповіді гарантований
+    expect(req.schema).toMatchObject({ type: 'object', required: ['tldr', 'key_points', 'chapters'], additionalProperties: false });
+    expect(req.schema.properties.chapters.items.required).toEqual(['time', 'title']);
     expect(req.system).toMatch(/Write all text in Ukrainian/);
     expect(req.prompt).toMatch(/Title: T\nChannel: C\nDescription: D/);
     expect(req.prompt).toContain('[00:00] Hello\n[01:35] World');
@@ -138,7 +141,9 @@ describe('summarizeTranscript', () => {
     const chunkCalls = m.ask.mock.calls.filter(([r]) => r.tag === 'summary_chunk');
     expect(chunkCalls.length).toBe(sz.chunkTranscript(t, 4000).length);
     expect(chunkCalls[1][0].prompt).toMatch(/Part 2 of \d+/);
+    expect(chunkCalls[0][0].schema.required).toEqual(['summary', 'chapters']);
     const reduce = m.ask.mock.calls.at(-1)![0];
+    expect(reduce.schema.required).toEqual(['tldr', 'key_points']);
     expect(reduce.prompt).toMatch(/1\. Part summary\.\n2\. Part summary\./);
     expect(reduce.system).toMatch(/in English/);
     expect(s.tldr).toBe('Whole video.');

@@ -280,6 +280,20 @@ TL;DR видно в `get_feed`, підсумок потрапляє в опис 
 `SUMMARY_MIN_DURATION_SEC` пропускаються; збої транскрипту повторюються з паузою, що росте, «немає субтитрів» — ні.
 Налаштування: `SUMMARY_LANGUAGE`, `SUMMARY_DAILY_LIMIT`, `AUTO_SUMMARY` (див. `.env.example`).
 
+### AI-провайдери та ключі
+
+Задаються в `.env` (або в блоці `env` у `claude_desktop_config.json`). Потрібні лише для того, що ytome робить сам —
+підсумки й `evaluate_video`; у Claude Desktop / claude.ai `analyze_transcript` аналізує сам Claude у чаті.
+
+| Провайдер | Налаштування |
+|-----------|--------------|
+| Claude | `ANTHROPIC_API_KEY`. Рівні: Haiku 5.5 → Sonnet 5.5 → Opus 5.5, змінюються через `CLAUDE_MODEL_FAST` / `_BALANCED` / `_TOP` (напр. `claude-fable-5-1`) |
+| Ollama / LM Studio | локально, безкоштовно: `OLLAMA_ENABLED`, `LMSTUDIO_ENABLED` |
+| Groq / OpenRouter | `GROQ_API_KEY`, `OPENROUTER_API_KEY` (через OpenRouter і моделі OpenAI: `OPENROUTER_MODEL=openai/gpt-4o-mini`) |
+| OpenAI або будь-який OpenAI-сумісний роутер | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (обов'язково) — усі запити йдуть туди, внутрішній балансувальник — запасний |
+
+`ai_status` з `check_health: true` показує, які провайдери відповідають.
+
 ### Експорт / Імпорт
 
 | Інструмент | Опис |
