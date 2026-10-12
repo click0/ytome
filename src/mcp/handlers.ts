@@ -26,6 +26,7 @@ import { evaluateVideo, evaluateBatch } from '../evaluation/index';
 import { getVideoCacheStatus, getBatchCacheStatus, getTranscriptCached, getCommentsCached, getThumbnailCached, getMediaCached, getVideoMeta } from '../cache/resolver';
 import { getRoutingInfo, getAIUsageStats, getMode } from '../ai/balancer';
 import { checkAllProviders } from '../ai/providers';
+import { checkClaudeModels } from '../ai/claude';
 import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp } from '../youtube/ytdlp';
 import { addFilterRule, removeFilterRule, setFilterEnabled, listFilterRules, clearFilterRules } from '../filters/index';
 import { getQuotaStatus, getQuotaHistory, getQuotaBreakdown, QUOTA_COSTS } from '../db/quota';
@@ -1212,8 +1213,8 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       const routing = getRoutingInfo();
       const mode = getMode();
       if (args.check_health) {
-        const health = await checkAllProviders();
-        return ok({ mode, routing, health });
+        const [health, claude] = await Promise.all([checkAllProviders(), checkClaudeModels()]);
+        return ok({ mode, routing, health, claude });
       }
       return ok({ mode, routing });
     }

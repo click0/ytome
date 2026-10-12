@@ -280,6 +280,20 @@ The TL;DR shows up in `get_feed`, and the summary goes into the `.nfo` plot of t
 than `SUMMARY_MIN_DURATION_SEC` are skipped; transcript failures are retried with a growing delay, "no captions" is not.
 Settings: `SUMMARY_LANGUAGE`, `SUMMARY_DAILY_LIMIT`, `AUTO_SUMMARY` (see `.env.example`).
 
+### AI providers and keys
+
+Set in `.env` (or in the `env` block of `claude_desktop_config.json`). Only needed for what ytome does on its own —
+summaries and `evaluate_video`; in Claude Desktop / claude.ai, `analyze_transcript` is analysed by Claude in the chat.
+
+| Provider | Settings |
+|----------|----------|
+| Claude | `ANTHROPIC_API_KEY`. Tiers: Haiku 5.5 → Sonnet 5.5 → Opus 5.5, override with `CLAUDE_MODEL_FAST` / `_BALANCED` / `_TOP` (e.g. `claude-fable-5-1`) |
+| Ollama / LM Studio | local, free: `OLLAMA_ENABLED`, `LMSTUDIO_ENABLED` |
+| Groq / OpenRouter | `GROQ_API_KEY`, `OPENROUTER_API_KEY` (OpenRouter also gives OpenAI models: `OPENROUTER_MODEL=openai/gpt-4o-mini`) |
+| OpenAI or any OpenAI-compatible router | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (required) — all requests go there, the internal balancer is the fallback |
+
+`ai_status` with `check_health: true` shows which providers answer.
+
 ### Export / Import
 
 | Tool | Description |

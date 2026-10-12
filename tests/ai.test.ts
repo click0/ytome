@@ -6,12 +6,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { useTempStorage, initTestDb, cleanup } from './helpers/temp-db';
 
-const net = vi.hoisted(() => ({ post: vi.fn(), create: vi.fn(), sdkOpts: [] as any[] }));
+const net = vi.hoisted(() => ({ post: vi.fn(), create: vi.fn(), retrieve: vi.fn(), sdkOpts: [] as any[] }));
 
 vi.mock('axios', () => ({ default: { post: net.post, get: vi.fn() } }));
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class {
-    messages = { create: net.create };
+    beta = { messages: { create: net.create } };
+    models = { retrieve: net.retrieve };
     constructor(opts: any) { net.sdkOpts.push(opts); }
   },
 }));
@@ -24,7 +25,8 @@ let balancer: typeof import('../src/ai/balancer');
 let init: Awaited<ReturnType<typeof initTestDb>>;
 
 const ENV_KEYS = ['OLLAMA_ENABLED', 'LMSTUDIO_ENABLED', 'GROQ_API_KEY', 'OPENROUTER_API_KEY',
-  'ANTHROPIC_API_KEY', 'BALANCER_MODE', 'AI_PROXY_URL', 'AI_PROXY_MODEL', 'AI_PROXY_API_KEY', 'OLLAMA_URL'];
+  'ANTHROPIC_API_KEY', 'BALANCER_MODE', 'AI_PROXY_URL', 'AI_PROXY_MODEL', 'AI_PROXY_API_KEY', 'OLLAMA_URL',
+  'CLAUDE_MODEL_FAST', 'CLAUDE_MODEL_BALANCED', 'CLAUDE_MODEL_TOP'];
 
 /** Лише вказані провайдери увімкнені */
 function enable(...names: Array<'ollama' | 'lmstudio' | 'groq' | 'openrouter' | 'claude'>) {
@@ -36,7 +38,11 @@ function enable(...names: Array<'ollama' | 'lmstudio' | 'groq' | 'openrouter' | 
 }
 
 const openaiReply = (content: string) => ({ data: { choices: [{ message: { content } }], usage: { prompt_tokens: 3, completion_tokens: 4 } } });
-const claudeReply = (text: string) => ({ content: [{ type: 'text', text }], usage: { input_tokens: 1000, output_tokens: 100 } });
+const claudeReply = (text: string, extra: Record<string, unknown> = {}) => ({
+  // поточні моделі думають: thinking-блок перед текстом
+  content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text }],
+  stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 100 }, ...extra,
+});
 /** Хто відповідав: URL-и HTTP-провайдерів і моделі Claude у порядку викликів */
 const tried = () => [
   ...net.post.mock.calls.map(([url]) => url as string),
@@ -56,6 +62,7 @@ beforeEach(() => {
   for (const k of ENV_KEYS) delete process.env[k];
   net.post.mockReset();
   net.create.mockReset();
+  net.retrieve.mockReset();
 });
 
 describe('providers', () => {
@@ -119,33 +126,85 @@ describe('providers', () => {
 describe('claude adapter', () => {
   it('needs an API key', async () => {
     expect(claude.claudeAvailable()).toBe(false);
-    await expect(claude.askClaude({ model: 'claude-haiku-4-5-20251001', prompt: 'p' })).rejects.toThrow(/ANTHROPIC_API_KEY/);
+    await expect(claude.askClaude({ model: 'claude-haiku-5-5', prompt: 'p' })).rejects.toThrow(/ANTHROPIC_API_KEY/);
+    expect(await claude.checkClaudeModels()).toEqual([]);
   });
 
-  it('sends the request, appends the JSON instruction and estimates cost', async () => {
+  it('current models per tier; .env overrides them', () => {
+    expect(['fast', 'balanced', 'top'].map(t => claude.claudeModel(t as any)))
+      .toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
+    process.env.CLAUDE_MODEL_TOP = 'claude-fable-5-1';
+    expect(claude.claudeModel('top')).toBe('claude-fable-5-1');
+  });
+
+  it('Haiku: effort, thinking headroom, JSON instruction, no server fallback; only text is returned', async () => {
     enable('claude');
     net.create.mockResolvedValueOnce(claudeReply('ok'));
-    const r = await claude.askClaude({ model: 'claude-haiku-4-5-20251001', system: 'S', prompt: 'p', json: true });
+    const r = await claude.askClaude({ model: 'claude-haiku-5-5', system: 'S', prompt: 'p', json: true, effort: 'low' });
     expect(net.sdkOpts.at(-1)).toEqual({ apiKey: 'sk-ant' });
     expect(net.create.mock.calls[0][0]).toEqual({
-      model: 'claude-haiku-4-5-20251001', max_tokens: 512,
+      model: 'claude-haiku-5-5', max_tokens: 512 + 8000,
       system: 'S\nRespond ONLY with valid JSON. No markdown, no explanation.',
+      output_config: { effort: 'low' },
       messages: [{ role: 'user', content: 'p' }],
     });
-    // 1000 × $0.80/M + 100 × $4/M
-    expect(r).toMatchObject({ text: 'ok', inputTokens: 1000, outputTokens: 100, cost_usd: 0.0012 });
+    // 1000 × $0.10/M + 100 × $0.50/M
+    expect(r).toMatchObject({ text: 'ok', inputTokens: 1000, outputTokens: 100, model: 'claude-haiku-5-5', cost_usd: 0.00015 });
+  });
+
+  it('Opus / Sonnet: structured output by schema and server-side fallback', async () => {
+    enable('claude');
+    const schema = { type: 'object', properties: { x: { type: 'number' } }, required: ['x'], additionalProperties: false };
+    net.create.mockResolvedValueOnce(claudeReply('{"x":1}', { model: 'claude-opus-4-8' }));
+    const r = await claude.askClaude({ model: 'claude-opus-5-5', prompt: 'p', json: true, schema, effort: 'high' });
+    const req = net.create.mock.calls[0][0];
+    expect(req.output_config).toEqual({ effort: 'high', format: { type: 'json_schema', schema } });
+    expect(req.system).toBeUndefined(); // зі схемою інструкція про JSON не потрібна
+    expect(req.betas).toEqual(['server-side-fallback-2026-07-01']);
+    expect(req.fallbacks).toBe('default');
+    expect(r.model).toBe('claude-opus-4-8'); // відповіла модель серверного fallback
+    expect(r.cost_usd).toBe(0);              // її ціни немає в таблиці — не вигадуємо
 
     net.create.mockResolvedValueOnce(claudeReply('plain'));
-    await claude.askClaude({ model: 'claude-sonnet-4-6', prompt: 'p' });
-    expect(net.create.mock.calls[1][0].system).toBeUndefined();
+    await claude.askClaude({ model: 'claude-sonnet-5-5', prompt: 'p' });
+    expect(net.create.mock.calls[1][0]).toMatchObject({ fallbacks: 'default', max_tokens: 8512 });
+    expect(net.create.mock.calls[1][0].output_config).toBeUndefined();
+  });
+
+  it('unknown / older model id: passed as is, without effort or headroom', async () => {
+    enable('claude');
+    net.create.mockResolvedValueOnce(claudeReply('x'));
+    await claude.askClaude({ model: 'claude-haiku-4-5', prompt: 'p', effort: 'low' });
+    expect(net.create.mock.calls[0][0]).toEqual({ model: 'claude-haiku-4-5', max_tokens: 512, messages: [{ role: 'user', content: 'p' }] });
+  });
+
+  it('refusal and an empty answer cut by max_tokens are errors', async () => {
+    enable('claude');
+    net.create.mockResolvedValueOnce(claudeReply('', { stop_reason: 'refusal', stop_details: { category: 'cyber' } }));
+    await expect(claude.askClaude({ model: 'claude-sonnet-5-5', prompt: 'p' })).rejects.toThrow(/declined.*cyber/);
+    net.create.mockResolvedValueOnce(claudeReply('', { stop_reason: 'max_tokens' }));
+    await expect(claude.askClaude({ model: 'claude-sonnet-5-5', prompt: 'p' })).rejects.toThrow(/max_tokens/);
   });
 
   it('askClaudeJSON parses or returns null', async () => {
     enable('claude');
     net.create.mockResolvedValueOnce(claudeReply('```json{"x":2}```'));
-    expect(await claude.askClaudeJSON({ model: 'claude-sonnet-4-6', prompt: 'p' })).toEqual({ x: 2 });
+    expect(await claude.askClaudeJSON({ model: 'claude-sonnet-5-5', prompt: 'p' })).toEqual({ x: 2 });
     net.create.mockResolvedValueOnce(claudeReply('nope'));
-    expect(await claude.askClaudeJSON({ model: 'claude-sonnet-4-6', prompt: 'p' })).toBeNull();
+    expect(await claude.askClaudeJSON({ model: 'claude-sonnet-5-5', prompt: 'p' })).toBeNull();
+  });
+
+  it('checkClaudeModels asks the Models API for every tier (no tokens spent)', async () => {
+    enable('claude');
+    net.retrieve.mockImplementation(async (id: string) => {
+      if (id === 'claude-opus-5-5') throw new Error('404 not_found');
+      return { id };
+    });
+    expect(await claude.checkClaudeModels()).toEqual([
+      { tier: 'fast', model: 'claude-haiku-5-5', ok: true },
+      { tier: 'balanced', model: 'claude-sonnet-5-5', ok: true },
+      { tier: 'top', model: 'claude-opus-5-5', ok: false, error: '404 not_found' },
+    ]);
   });
 });
 
@@ -173,20 +232,22 @@ describe('balancer', () => {
     net.post.mockReset().mockRejectedValue(new Error('down'));
     net.create.mockRejectedValueOnce(new Error('overloaded'));
     await expect(balancer.ask({ complexity: 'simple', prompt: 'p' }))
-      .rejects.toThrow(/All providers failed[\s\S]*ollama: down[\s\S]*groq: down[\s\S]*claude:claude-haiku-4-5-20251001: overloaded/);
+      .rejects.toThrow(/All providers failed[\s\S]*ollama: down[\s\S]*groq: down[\s\S]*claude:claude-haiku-5-5: overloaded/);
   });
 
   it('cost mode keeps expensive models for harder tasks', async () => {
     enable('claude');
     net.create.mockResolvedValue(claudeReply('ok'));
     await balancer.ask({ complexity: 'simple', prompt: 'p' });
-    expect(tried()).toEqual(['claude:claude-haiku-4-5-20251001']); // sonnet/opus — не для simple
+    expect(tried()).toEqual(['claude:claude-haiku-5-5']); // sonnet/opus — не для simple
+    expect(net.create.mock.calls[0][0].output_config).toEqual({ effort: 'low' });
 
     net.create.mockReset()
       .mockRejectedValueOnce(new Error('e1')).mockRejectedValueOnce(new Error('e2')).mockResolvedValueOnce(claudeReply('deep'));
     const r = await balancer.ask({ complexity: 'complex', prompt: 'p' });
-    expect(tried()).toEqual(['claude:claude-haiku-4-5-20251001', 'claude:claude-sonnet-4-6', 'claude:claude-opus-4-6']);
-    expect(r).toMatchObject({ text: 'deep', provider: 'claude:claude-opus-4-6', cost_usd: expect.any(Number) });
+    expect(tried()).toEqual(['claude:claude-haiku-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-opus-5-5']);
+    expect(r).toMatchObject({ text: 'deep', provider: 'claude:claude-opus-5-5', cost_usd: expect.any(Number) });
+    expect(net.create.mock.calls[2][0].output_config).toEqual({ effort: 'high' });
   });
 
   it('priority mode follows the fixed route, skipping disabled steps', async () => {
@@ -194,7 +255,7 @@ describe('balancer', () => {
     enable('groq', 'claude');
     net.create.mockResolvedValueOnce(claudeReply('crit'));
     await balancer.ask({ complexity: 'critical', prompt: 'p' });
-    expect(tried()).toEqual(['claude:claude-sonnet-4-6']);
+    expect(tried()).toEqual(['claude:claude-opus-5-5']);
 
     net.post.mockResolvedValueOnce(openaiReply('med'));
     await balancer.ask({ complexity: 'medium', prompt: 'p' });
@@ -219,10 +280,10 @@ describe('balancer', () => {
     enable('groq');
     net.post.mockResolvedValueOnce(openaiReply('via proxy'));
     const r = await balancer.ask({ complexity: 'critical', system: 's', prompt: 'p', json: true });
-    expect(r).toMatchObject({ text: 'via proxy', provider: 'proxy:router.local:claude-sonnet-4-6' });
+    expect(r).toMatchObject({ text: 'via proxy', provider: 'proxy:router.local:claude-opus-5-5' });
     const [url, body, opts] = net.post.mock.calls[0];
     expect(url).toBe('http://router.local:3456/v1/chat/completions');
-    expect(body).toMatchObject({ model: 'claude-sonnet-4-6', response_format: { type: 'json_object' } });
+    expect(body).toMatchObject({ model: 'claude-opus-5-5', response_format: { type: 'json_object' } });
     expect(opts.headers.Authorization).toBe('Bearer rk');
 
     process.env.AI_PROXY_MODEL = 'fixed';
@@ -248,7 +309,7 @@ describe('balancer', () => {
     expect(info.mode).toBe('cost');
     expect(info.routes.simple[0]).toBe('✅ groq [1-free-cloud]');
     expect(info.routes.simple).toContain('⬜ ollama (disabled)');
-    expect(info.routes.critical).toContain('⬜ claude:claude-opus-4-6 (disabled)');
+    expect(info.routes.critical).toContain('⬜ claude:claude-opus-5-5 (disabled)');
     expect(info.proxy.status).toMatch(/not configured/);
     process.env.AI_PROXY_URL = 'http://r:1';
     expect(balancer.getRoutingInfo().proxy).toMatchObject({ url: 'http://r:1', model: 'auto' });

@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Changed
+- Claude: поточні моделі — Haiku 5.5 / Sonnet 5.5 / Opus 5.5 замість Haiku 4.5 / Sonnet 4.6 /
+  Opus 4.6, актуальні ціни; рівні fast / balanced / top змінюються через `CLAUDE_MODEL_*`
+  (наприклад, `CLAUDE_MODEL_TOP=claude-fable-5-1`). Режим `priority`: критичні задачі — Opus
+- Claude: глибина роздумів (`effort`) за складністю задачі, запас токенів на роздуми,
+  серверний fallback Anthropic при відмові класифікатора (Opus / Sonnet / Fable)
+- Підсумки транскриптів через Claude — structured outputs: формат відповіді гарантований схемою
+- `ai_status` з `check_health: true` перевіряє доступність моделей Claude через Models API
+  (без витрат токенів)
+
+### Fixed
+- Відмова Claude (`stop_reason: refusal`) і порожня відповідь, обрізана `max_tokens`, тепер
+  помилки — балансувальник переходить до наступного провайдера; раніше повертався порожній текст
+
 ## [0.96.0] - 2026-10-12
 
 ### Added

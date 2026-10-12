@@ -183,8 +183,23 @@ const CHAPTERS_SPEC = (timed: boolean) => timed
   ? '"chapters": [{"time": "mm:ss", "title": "..."}] — where each topic starts, time copied from the [mm:ss] marks'
   : '"chapters": [{"title": "..."}] — main topics in order';
 
+// JSON Schema відповідей — Claude дотримується їх гарантовано (structured outputs)
+const str = { type: 'string' };
+const strList = { type: 'array', items: str };
+const obj = (properties: Record<string, unknown>) =>
+  ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+const chaptersSchema = (timed: boolean) => ({
+  type: 'array', items: timed ? obj({ time: str, title: str }) : obj({ title: str }),
+});
+const SCHEMAS = {
+  full:   (timed: boolean) => obj({ tldr: str, key_points: strList, chapters: chaptersSchema(timed) }),
+  chunk:  (timed: boolean) => obj({ summary: str, chapters: chaptersSchema(timed) }),
+  reduce: () => obj({ tldr: str, key_points: strList }),
+};
+
 async function askSummaryJSON(req: {
   system: string; prompt: string; maxTokens: number; complexity: TaskComplexity; tag: string;
+  schema: Record<string, unknown>;
 }): Promise<{ data: any; provider: string }> {
   const res = await ask({ ...req, json: true });
   return { data: parseJsonReply(res.text), provider: res.provider };
@@ -207,7 +222,7 @@ export async function summarizeTranscript(input: SummaryInput, opts: SummaryOpti
 
   if (chunks.length === 1) {
     const { data, provider } = await askSummaryJSON({
-      system, complexity, tag: 'summary', maxTokens: 900,
+      system, complexity, tag: 'summary', maxTokens: 900, schema: SCHEMAS.full(timed),
       prompt: `${ctx}\n\nTranscript:\n${chunks[0].text}\n\n` +
         'Return JSON: {"tldr": "2-3 sentences", "key_points": ["5-7 key points"], ' +
         `${CHAPTERS_SPEC(timed)}}`,
@@ -220,7 +235,7 @@ export async function summarizeTranscript(input: SummaryInput, opts: SummaryOpti
   let provider = '';
   for (const [i, chunk] of chunks.entries()) {
     const r = await askSummaryJSON({
-      system, complexity, tag: 'summary_chunk', maxTokens: 500,
+      system, complexity, tag: 'summary_chunk', maxTokens: 500, schema: SCHEMAS.chunk(timed),
       prompt: `${ctx}\n\nPart ${i + 1} of ${chunks.length} of the transcript:\n${chunk.text}\n\n` +
         `Return JSON: {"summary": "3-5 sentences about this part", ${CHAPTERS_SPEC(timed)}}`,
     });
@@ -233,7 +248,7 @@ export async function summarizeTranscript(input: SummaryInput, opts: SummaryOpti
 
   // reduce: TL;DR і тези з підсумків частин
   const { data, provider: reduceProvider } = await askSummaryJSON({
-    system, complexity, tag: 'summary', maxTokens: 700,
+    system, complexity, tag: 'summary', maxTokens: 700, schema: SCHEMAS.reduce(),
     prompt: `${ctx}\n\nSummaries of consecutive parts of the video:\n` +
       parts.map((p, i) => `${i + 1}. ${p.summary}`).join('\n') +
       '\n\nReturn JSON: {"tldr": "2-3 sentences about the whole video", "key_points": ["5-7 key points"]}',
