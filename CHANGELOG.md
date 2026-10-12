@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-10-12
+
 ### Added
 - AI-підсумки транскриптів: `summarize_video` — TL;DR, ключові тези, розділи з таймкодами
   й посиланнями; довгі відео — частинами (map-reduce); зберігаються в архіві
@@ -112,7 +114,8 @@
 
 - Перший публічний реліз
 
-[Unreleased]: https://github.com/click0/ytome/compare/v0.95...HEAD
+[Unreleased]: https://github.com/click0/ytome/compare/v0.96...HEAD
+[0.96.0]: https://github.com/click0/ytome/compare/v0.95...v0.96
 [0.95.0]: https://github.com/click0/ytome/compare/v0.90...v0.95
 [0.90.0]: https://github.com/click0/ytome/compare/v0.85...v0.90
 [0.85.0]: https://github.com/click0/ytome/compare/v0.75...v0.85
