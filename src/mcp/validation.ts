@@ -392,6 +392,12 @@ export const transcribeAudioSchema = z.object({
   provider: z.enum(['groq', 'openai']).optional(),
 });
 
+export const searchVideosSchema = z.object({
+  query: z.string().trim().min(1, 'query is required').max(200),
+  limit: z.number().int().min(1).max(50).optional(),
+  sort:  z.enum(['relevance', 'date']).optional(),
+});
+
 export const SCHEMAS: Record<string, z.ZodType> = {
   subscribe:          subscribeSchema,
   list_subscriptions: listSubscriptionsSchema,
@@ -460,6 +466,7 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   digest:          digestSchema,
 
   transcribe_audio: transcribeAudioSchema,
+  search_videos:    searchVideosSchema,
 };
 
 /**

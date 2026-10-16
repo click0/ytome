@@ -11,7 +11,7 @@ const log = createLogger('mcp');
 import {
   getChannels, addChannel, getChannel, getNewVideos,
   getUnseenVideos, markAsSeen, getTranscript, saveTranscript, saveTranscriptForVideo,
-  hasTranscript, createGroup, addChannelToGroup, getGroups,
+  hasTranscript, createGroup, addChannelToGroup, getGroups, getKnownVideoIds,
 } from '../db/queries';
 import {
   addToWatchLater, getWatchLater, updateWatchLaterStatus,
@@ -28,7 +28,7 @@ import { getVideoCacheStatus, getBatchCacheStatus, getTranscriptCached, getComme
 import { getRoutingInfo, getAIUsageStats, getMode } from '../ai/balancer';
 import { checkAllProviders } from '../ai/providers';
 import { checkClaudeModels } from '../ai/claude';
-import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp } from '../youtube/ytdlp';
+import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp, searchVideos } from '../youtube/ytdlp';
 import { addFilterRule, removeFilterRule, setFilterEnabled, listFilterRules, clearFilterRules } from '../filters/index';
 import { getQuotaStatus, getQuotaHistory, getQuotaBreakdown, QUOTA_COSTS } from '../db/quota';
 import { addProfile, removeProfile, listProfiles, setDefaultProfile, assignChannelProfile, profileOptsForVideo } from '../profiles/manager';
@@ -141,6 +141,20 @@ export const TOOLS: Tool[] = [
         force_refresh: { type: 'boolean', description: 'Ігнорувати кеш і завантажити заново' },
       },
       required: ['video_id'],
+    },
+  },
+  {
+    name: 'search_videos',
+    description: 'Пошук відео на YouTube через yt-dlp — без API-ключа й без витрат квоти ' +
+      '(search.list коштує 100 одиниць). Позначає відео, що вже є в архіві',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Пошуковий запит' },
+        limit: { type: 'number', description: 'Скільки результатів (1–50, за замовчуванням 10)' },
+        sort:  { type: 'string', enum: ['relevance', 'date'], description: 'relevance (за замовч.) або date — найновіші' },
+      },
+      required: ['query'],
     },
   },
   {
@@ -947,6 +961,23 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       } catch (e) {
         return transcriptErr(e);
       }
+    }
+
+    case 'search_videos': {
+      let results;
+      try {
+        results = await searchVideos(args.query, { limit: args.limit, sort: args.sort });
+      } catch (e) {
+        return err(safeErrorMessage(e));
+      }
+      const known = getKnownVideoIds(results.map(r => r.youtube_id));
+      return ok({
+        query: args.query,
+        sort: args.sort || 'relevance',
+        total: results.length,
+        quota_used: 0,
+        results: results.map(r => ({ ...r, in_archive: known.has(r.youtube_id) })),
+      });
     }
 
     case 'transcribe_audio': {

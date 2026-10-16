@@ -300,6 +300,69 @@ export async function downloadSubtitles(
 }
 
 // =============================================
+// Пошук відео без квоти YouTube Data API
+// =============================================
+
+export interface SearchResult {
+  youtube_id:   string;
+  title:        string;
+  channel?:     string;
+  channel_id?:  string;
+  duration_sec?: number;
+  view_count?:  number;
+  url:          string;
+}
+
+/**
+ * Пошук через yt-dlp ("ytsearchN:" / "ytsearchdateN:") — без API-ключа й квоти
+ * (search.list коштує 100 одиниць). Плоский режим: без відкриття кожного відео.
+ */
+export async function searchVideos(query: string, opts: {
+  limit?: number; sort?: 'relevance' | 'date';
+} = {}): Promise<SearchResult[]> {
+  const check = await checkYtDlp();
+  if (!check.available) {
+    throw new Error('yt-dlp not found. Install from https://github.com/yt-dlp/yt-dlp or set YTDLP_BIN in .env');
+  }
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
+  const prefix = opts.sort === 'date' ? 'ytsearchdate' : 'ytsearch';
+  const args = [
+    `${prefix}${limit}:${query}`,
+    '--flat-playlist', '--dump-single-json',
+    '--no-warnings', '--quiet',
+    '--retries', '3',
+    ...jsRuntimeArgs(check.version),
+  ];
+  const proxyArg = buildProxyArg();
+  if (proxyArg) args.push('--proxy', proxyArg);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 }));
+  } catch (e) {
+    throw new Error(safeErrorMessage(e));
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    throw new Error('yt-dlp returned unreadable search results');
+  }
+  return (data.entries || [])
+    .filter((e: any) => e?.id && (e.ie_key === undefined || e.ie_key === 'Youtube'))
+    .map((e: any): SearchResult => ({
+      youtube_id: e.id,
+      title: e.title || 'Untitled',
+      channel: e.channel ?? e.uploader ?? undefined,
+      channel_id: e.channel_id ?? undefined,
+      duration_sec: typeof e.duration === 'number' ? Math.round(e.duration) : undefined,
+      view_count: typeof e.view_count === 'number' ? e.view_count : undefined,
+      url: `https://youtube.com/watch?v=${e.id}`,
+    }));
+}
+
+// =============================================
 // Аудіо для розпізнавання (Whisper)
 // =============================================
 

@@ -220,6 +220,40 @@ describe('JS runtime for YouTube', () => {
   });
 });
 
+describe('searchVideos', () => {
+  const json = JSON.stringify({ entries: [
+    { id: 'vid00000001', title: 'First', channel: 'Chan', channel_id: 'UCc', duration: 61.7, view_count: 1000, ie_key: 'Youtube' },
+    { id: 'PLlist', title: 'A playlist', ie_key: 'YoutubeTab' },
+    { id: 'vid00000002', uploader: 'Up' },
+    null,
+  ] });
+
+  it('flat search, no quota: maps entries and skips playlists/channels', async () => {
+    proc.handler = () => ({ stdout: json });
+    const r = await y.searchVideos('rust tutorial', { limit: 5 });
+    expect(r).toEqual([
+      { youtube_id: 'vid00000001', title: 'First', channel: 'Chan', channel_id: 'UCc', duration_sec: 62, view_count: 1000, url: 'https://youtube.com/watch?v=vid00000001' },
+      { youtube_id: 'vid00000002', title: 'Untitled', channel: 'Up', channel_id: undefined, duration_sec: undefined, view_count: undefined, url: 'https://youtube.com/watch?v=vid00000002' },
+    ]);
+    const { args } = downloadCall();
+    expect(args[0]).toBe('ytsearch5:rust tutorial');
+    expect(args).toEqual(expect.arrayContaining(['--flat-playlist', '--dump-single-json']));
+  });
+
+  it('sort by date, limit clamped to 1..50, a query cannot become an option', async () => {
+    proc.handler = () => ({ stdout: '{"entries": []}' });
+    await y.searchVideos('--exec rm', { limit: 500, sort: 'date' });
+    expect(downloadCall().args[0]).toBe('ytsearchdate50:--exec rm');
+  });
+
+  it('broken output and failures are errors without credentials', async () => {
+    proc.handler = () => ({ stdout: 'not json' });
+    await expect(y.searchVideos('x')).rejects.toThrow(/unreadable/);
+    proc.handler = () => new Error('Command failed: yt-dlp --proxy http://u:pw@h:1');
+    await expect(y.searchVideos('x')).rejects.toThrow('http://***@h:1');
+  });
+});
+
 describe('srtToText', () => {
   it('drops counters, timecodes and tags, joins lines', () => {
     const srt = '1\n00:00:01,000 --> 00:00:02,000\n<i>Hello</i>\n\n2\n00:00:03,000 --> 00:00:04,000\nworld  again\n';

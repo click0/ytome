@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   checkChannel: vi.fn(),
   checkAllChannels: vi.fn(),
   downloadVideo: vi.fn(),
+  searchVideos: vi.fn(),
   fetchPlaylistInfo: vi.fn(),
   fetchPlaylistTracks: vi.fn(),
   checkAllProviders: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('../src/scheduler/index', () => ({
 vi.mock('../src/youtube/ytdlp', async (orig) => ({
   ...(await orig<typeof import('../src/youtube/ytdlp')>()),
   downloadVideo: m.downloadVideo,
+  searchVideos: m.searchVideos,
 }));
 vi.mock('../src/youtube/music', async (orig) => ({
   ...(await orig<typeof import('../src/youtube/music')>()),
@@ -517,5 +519,22 @@ describe('transcribe_audio', () => {
     m.transcribeWithWhisper.mockRejectedValueOnce(new Error('ffmpeg не знайдено'));
     expect((await call('transcribe_audio', { video_id: 'outside0001' })).error).toMatch(/ffmpeg/);
     delete process.env.GROQ_API_KEY;
+  });
+});
+
+describe('search_videos', () => {
+  it('returns results with the in-archive flag and zero quota', async () => {
+    m.searchVideos.mockResolvedValueOnce([
+      { youtube_id: 'vidAlpha001', title: 'Alpha one', url: 'https://youtube.com/watch?v=vidAlpha001' },
+      { youtube_id: 'newVideo001', title: 'New', url: 'https://youtube.com/watch?v=newVideo001' },
+    ]);
+    const r = await call('search_videos', { query: 'alpha', limit: 2, sort: 'date' });
+    expect(m.searchVideos).toHaveBeenCalledWith('alpha', { limit: 2, sort: 'date' });
+    expect(r.data).toMatchObject({ total: 2, quota_used: 0, sort: 'date' });
+    expect(r.data.results.map((x: any) => [x.youtube_id, x.in_archive])).toEqual([['vidAlpha001', true], ['newVideo001', false]]);
+
+    expect((await call('search_videos', { query: '   ' })).error).toMatch(/query is required/);
+    m.searchVideos.mockRejectedValueOnce(new Error('yt-dlp not found'));
+    expect((await call('search_videos', { query: 'x' })).error).toMatch(/yt-dlp not found/);
   });
 });
