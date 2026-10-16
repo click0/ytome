@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getDb } from '../db/init';
+import { safeErrorMessage } from '../redact';
 
 // =============================================
 // Типи
@@ -215,7 +216,7 @@ export async function checkProxyHealth(
     markHealthy(proxy.id, true);
     return { ok: true, latencyMs };
   } catch (e: any) {
-    const msg = e.message || 'unknown error';
+    const msg = safeErrorMessage(e);
     markHealthy(proxy.id, false, msg);
     return { ok: false, error: msg };
   }

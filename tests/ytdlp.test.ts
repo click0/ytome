@@ -114,6 +114,15 @@ describe('downloadVideo', () => {
     expect(downloadCall().args).not.toContain('--proxy');
   });
 
+  it('a failed download does not leak proxy credentials from the command line', async () => {
+    px.addProxy({ url: 'socks5://user:s3cret@10.0.0.9:1080' });
+    px.setProxyMode('single');
+    proc.handler = (args) => new Error(`Command failed: yt-dlp ${args.join(' ')}\nERROR: 403`);
+    const e = await y.downloadVideo('vid00000001').catch(err => err);
+    expect(e.message).toContain('--proxy socks5://***@10.0.0.9:1080');
+    expect(e.message).not.toContain('s3cret');
+  });
+
   it('errors when yt-dlp prints nothing or the file is missing', async () => {
     proc.handler = () => ({ stdout: '', stderr: 'ERROR: boom' });
     await expect(y.downloadVideo('vid00000001')).rejects.toThrow(/produced no output[\s\S]*boom/);

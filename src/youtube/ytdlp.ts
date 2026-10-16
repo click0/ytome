@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { getNextProxy, getProxyMode } from '../proxy/manager';
 import { createLogger } from '../logger';
+import { redactCredentials, safeErrorMessage } from '../redact';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('ytdlp');
@@ -162,20 +163,24 @@ export async function downloadVideo(
 
   log.info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
 
-  const { stdout, stderr } = await execFileAsync(YTDLP_BIN, args, {
-    timeout: DOWNLOAD_TIMEOUT_MS,
-  });
+  let stdout: string, stderr: string;
+  try {
+    ({ stdout, stderr } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+  } catch (e) {
+    // Повідомлення execFile містить увесь командний рядок, зокрема --proxy з паролем
+    throw new Error(safeErrorMessage(e));
+  }
 
   // --print after_move:filepath виводить шлях у stdout
   const lines = stdout.trim().split('\n');
   const lastLine = lines[lines.length - 1];
   if (!lastLine) {
-    throw new Error(`yt-dlp produced no output.\nstderr: ${stderr}`);
+    throw new Error(`yt-dlp produced no output.\nstderr: ${redactCredentials(stderr)}`);
   }
   const filePath = lastLine.trim();
 
   if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(`yt-dlp completed but output file not found.\nstderr: ${stderr}`);
+    throw new Error(`yt-dlp completed but output file not found.\nstderr: ${redactCredentials(stderr)}`);
   }
 
   const stat = fs.statSync(filePath);
@@ -236,7 +241,7 @@ export async function downloadSubtitles(
     if (!anyPath) return null;
     return fs.readFileSync(anyPath, 'utf-8');
   } catch (e: any) {
-    log.error({ videoId, error: e.message }, 'subtitle download failed');
+    log.error({ videoId, error: safeErrorMessage(e) }, 'subtitle download failed');
     return null;
   }
 }

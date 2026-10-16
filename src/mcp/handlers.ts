@@ -4,6 +4,7 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createLogger } from '../logger';
 import { validateArgs } from './validation';
 import { getDb } from '../db/init';
+import { redactCredentials } from '../redact';
 
 const log = createLogger('mcp');
 
@@ -1285,7 +1286,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'proxy_add': {
       const p = addProxy({ url: args.url, label: args.label, enabled: args.enabled });
-      return ok({ success: true, proxy: { id: p.id, url: p.url, label: p.label, protocol: p.protocol } });
+      return ok({ success: true, proxy: { id: p.id, url: redactCredentials(p.url), label: p.label, protocol: p.protocol } });
     }
 
     case 'proxy_list': {
@@ -1323,10 +1324,10 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         results: results.map(r => ({
           id:        r.id,
           label:     r.label,
-          url:       r.url,
+          url:       redactCredentials(r.url),
           status:    r.ok ? '✅ ok' : '❌ fail',
           latency:   r.latencyMs ? `${r.latencyMs}ms` : undefined,
-          error:     r.error,
+          error:     r.error && redactCredentials(r.error),
         })),
       });
     }

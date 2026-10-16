@@ -326,6 +326,15 @@ describe('proxies, filters, quota, groups', () => {
     expect((await call('proxy_test')).data).toEqual({ total: 0, healthy: 0, results: [] });
   });
 
+  it('proxy credentials never reach the chat', async () => {
+    const add = await call('proxy_add', { url: 'http://user:s3cret@127.0.0.1:9' });
+    expect(add.data.proxy.url).toBe('http://***@127.0.0.1:9');
+    const test = await call('proxy_test');
+    expect(test.data.results[0]).toMatchObject({ url: 'http://***@127.0.0.1:9', status: '❌ fail' });
+    expect(JSON.stringify(add.data) + JSON.stringify(test.data)).not.toContain('s3cret');
+    await call('proxy_remove', { id: add.data.proxy.id });
+  });
+
   it('filter tools', async () => {
     const w = await call('filter_add', { type: 'whitelist', scope: 'channel', value: 'UCalpha' });
     await call('filter_add', { type: 'blacklist', scope: 'description', value: 'spam' });
