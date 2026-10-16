@@ -191,7 +191,9 @@ describe('JS runtime for YouTube', () => {
   it('with deno on PATH: nothing to add (yt-dlp enables deno itself)', () => {
     const deno = path.join(binDir(), process.platform === 'win32' ? 'deno.exe' : 'deno');
     fs.writeFileSync(deno, '');
-    expect(y.findExecutable('deno')).toBe(deno);
+    // Windows: регістр не важливий, розширення приходить з PATHEXT (.EXE)
+    const norm = (p: string | null) => (process.platform === 'win32' ? p?.toLowerCase() : p);
+    expect(norm(y.findExecutable('deno'))).toBe(norm(deno));
     expect(y.jsRuntimeArgs('2026.09.01')).toEqual([]);
   });
 
