@@ -22,6 +22,10 @@ npm test
 - **Filters**: `src/filters/` — whitelist/blacklist engine
 - **Scheduler**: `src/scheduler/` — cron-based channel checking; RSS detection (`src/youtube/rss.ts`) for already-synced channels, `search.list` only for first sync
 - **Transcripts**: `fetchTranscript` in `src/youtube/api.ts` throws `TranscriptUnavailableError` with a reason (`src/youtube/transcript-errors.ts`); fetch hooks must return Response-like objects (ok/status/text/json); `src/export/transcript.ts` writes `.txt`
+- **Whisper**: `src/youtube/whisper.ts` — audio via yt-dlp → ffmpeg 10-min chunks → Groq/OpenAI `verbose_json`; last step of `fetchTranscript` for `no_captions` only when `WHISPER_PROVIDER` allows it (default `off` = only the explicit `transcribe_audio` tool); never re-sends audio to a second provider
+- **yt-dlp**: `src/youtube/ytdlp.ts` — every call adds `jsRuntimeArgs(version)` (YouTube needs a JS runtime since 2025.11.12: our own Node unless deno is on PATH); `searchVideos` = flat `ytsearchN:` (no quota; date sort is not available)
+- **Doctor**: `src/doctor/index.ts` — `runDoctor({ network })` used by the `doctor` tool and `npm run doctor`; each check really runs the dependency and returns status + fix
+- **Secrets**: `src/redact.ts` — `redactCredentials` / `safeErrorMessage` strip `user:pass@` from text that reaches the chat or logs (proxy URLs, yt-dlp command lines); use them for any error text that may contain a URL
 - **AI summaries**: `src/summary/` — `summarize.ts` (chunks with `[mm:ss]` marks → map-reduce via `ask()`, PROMPT_VERSION invalidates stored summaries), `index.ts` (table `summaries`, queue for channels with `auto_summary`, retry/skip by `TranscriptUnavailableError` reason, digest); run by the scheduler after each check (`runAutoSummaries`)
 - **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
 - **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel)
@@ -50,10 +54,11 @@ applied lazily by `ensureSummarySchema()`).
 ## Testing
 
 ```bash
-npm test               # vitest run (330 tests)
+npm test               # vitest run (365 tests)
 npm run test:watch
 npm run test:coverage  # + coverage report; thresholds in vitest.config.mts (CI fails below them)
 npm run smoke          # build + smoke test of both MCP transports
+npm run doctor         # diagnostics after build (-- --network for API key / proxies / AI)
 ```
 
 Tests in `tests/` run against the real modules: `tests/helpers/temp-db.ts` gives each file its own

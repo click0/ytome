@@ -240,10 +240,13 @@ describe('searchVideos', () => {
     expect(args).toEqual(expect.arrayContaining(['--flat-playlist', '--dump-single-json']));
   });
 
-  it('sort by date, limit clamped to 1..50, a query cannot become an option', async () => {
+  it('limit clamped to 1..50, a query cannot become an option', async () => {
     proc.handler = () => ({ stdout: '{"entries": []}' });
-    await y.searchVideos('--exec rm', { limit: 500, sort: 'date' });
-    expect(downloadCall().args[0]).toBe('ytsearchdate50:--exec rm');
+    await y.searchVideos('--exec rm', { limit: 500 });
+    expect(downloadCall().args[0]).toBe('ytsearch50:--exec rm');
+    proc.calls = [];
+    await y.searchVideos('x', { limit: 0 });
+    expect(downloadCall().args[0]).toBe('ytsearch1:x');
   });
 
   it('broken output and failures are errors without credentials', async () => {

@@ -395,7 +395,10 @@ export const transcribeAudioSchema = z.object({
 export const searchVideosSchema = z.object({
   query: z.string().trim().min(1, 'query is required').max(200),
   limit: z.number().int().min(1).max(50).optional(),
-  sort:  z.enum(['relevance', 'date']).optional(),
+});
+
+export const doctorSchema = z.object({
+  network: z.boolean().optional(),
 });
 
 export const SCHEMAS: Record<string, z.ZodType> = {
@@ -467,6 +470,7 @@ export const SCHEMAS: Record<string, z.ZodType> = {
 
   transcribe_audio: transcribeAudioSchema,
   search_videos:    searchVideosSchema,
+  doctor:           doctorSchema,
 };
 
 /**

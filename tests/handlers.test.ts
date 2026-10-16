@@ -528,9 +528,9 @@ describe('search_videos', () => {
       { youtube_id: 'vidAlpha001', title: 'Alpha one', url: 'https://youtube.com/watch?v=vidAlpha001' },
       { youtube_id: 'newVideo001', title: 'New', url: 'https://youtube.com/watch?v=newVideo001' },
     ]);
-    const r = await call('search_videos', { query: 'alpha', limit: 2, sort: 'date' });
-    expect(m.searchVideos).toHaveBeenCalledWith('alpha', { limit: 2, sort: 'date' });
-    expect(r.data).toMatchObject({ total: 2, quota_used: 0, sort: 'date' });
+    const r = await call('search_videos', { query: 'alpha', limit: 2 });
+    expect(m.searchVideos).toHaveBeenCalledWith('alpha', { limit: 2 });
+    expect(r.data).toMatchObject({ total: 2, quota_used: 0 });
     expect(r.data.results.map((x: any) => [x.youtube_id, x.in_archive])).toEqual([['vidAlpha001', true], ['newVideo001', false]]);
 
     expect((await call('search_videos', { query: '   ' })).error).toMatch(/query is required/);

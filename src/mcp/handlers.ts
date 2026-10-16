@@ -41,6 +41,7 @@ import { exportLibrary } from '../export/library';
 import { exportTranscriptToFile, formatTimestamp } from '../export/transcript';
 import { TranscriptUnavailableError } from '../youtube/transcript-errors';
 import { whisperProvider, transcribeWithWhisper } from '../youtube/whisper';
+import { runDoctor } from '../doctor/index';
 import {
   summarizeVideo, setChannelAutoSummary, pendingSummaries, processSummaryQueue, buildDigest,
   getTldrs, summaryAsText, chapterLink,
@@ -144,15 +145,25 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'doctor',
+    description: 'Діагностика ytome: yt-dlp і JS-середовище, ffmpeg, ключ YouTube API і квота, база й місце на диску, ' +
+      'cookies профілів, проксі, AI-провайдери, Whisper, Google. Для кожної проблеми — як виправити',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        network: { type: 'boolean', description: 'Також перевірити ключ YouTube API (1 одиниця квоти), проксі й AI-провайдерів через мережу' },
+      },
+    },
+  },
+  {
     name: 'search_videos',
     description: 'Пошук відео на YouTube через yt-dlp — без API-ключа й без витрат квоти ' +
-      '(search.list коштує 100 одиниць). Позначає відео, що вже є в архіві',
+      '(search.list коштує 100 одиниць). Порядок — за релевантністю. Позначає відео, що вже є в архіві',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Пошуковий запит' },
         limit: { type: 'number', description: 'Скільки результатів (1–50, за замовчуванням 10)' },
-        sort:  { type: 'string', enum: ['relevance', 'date'], description: 'relevance (за замовч.) або date — найновіші' },
       },
       required: ['query'],
     },
@@ -963,17 +974,20 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       }
     }
 
+    case 'doctor': {
+      return ok(await runDoctor({ network: args.network }));
+    }
+
     case 'search_videos': {
       let results;
       try {
-        results = await searchVideos(args.query, { limit: args.limit, sort: args.sort });
+        results = await searchVideos(args.query, { limit: args.limit });
       } catch (e) {
         return err(safeErrorMessage(e));
       }
       const known = getKnownVideoIds(results.map(r => r.youtube_id));
       return ok({
         query: args.query,
-        sort: args.sort || 'relevance',
         total: results.length,
         quota_used: 0,
         results: results.map(r => ({ ...r, in_archive: known.has(r.youtube_id) })),

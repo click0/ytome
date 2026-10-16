@@ -264,6 +264,8 @@ If the server is connected, Claude will see the `ytome` tools and respond (with 
 | `get_transcript` | Video transcript (cache or fetch). `language`, `force_refresh` |
 | `export_transcript` | Save a transcript to `storage/exports/transcripts/<id>.txt` (`timestamps: true` for `[mm:ss]` lines) |
 | `analyze_transcript` | Fetch transcript + analysis instruction (summary/key_points/quotes/full) |
+| `transcribe_audio` | No captions? Download the audio and transcribe it with Whisper (Groq `whisper-large-v3`, free tier, or OpenAI). Timecoded, saved as the video's transcript. Needs ffmpeg |
+| `search_videos` | Search YouTube via yt-dlp — no API key, no quota. Marks videos already in the archive |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`, `with_replies` |
 
 ### AI Summaries
@@ -293,6 +295,16 @@ summaries and `evaluate_video`; in Claude Desktop / claude.ai, `analyze_transcri
 | OpenAI or any OpenAI-compatible router | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (required) — all requests go there, the internal balancer is the fallback |
 
 `ai_status` with `check_health: true` shows which providers answer.
+
+### Diagnostics
+
+`doctor` (MCP tool) or `npm run doctor [-- --network]` checks yt-dlp and its JavaScript runtime (YouTube needs one since
+yt-dlp 2025.11.12; ytome passes its own Node unless deno is installed, `YTDLP_JS_RUNTIME` overrides), ffmpeg, the YouTube
+API key and quota, database and disk space, profile cookies, proxies, AI providers, Whisper and Google — each problem with a fix.
+Network checks only with `network: true`.
+
+Whisper sends audio to one provider and only with consent: `WHISPER_PROVIDER=off` (default) — only via `transcribe_audio`;
+`auto` / `groq` / `openai` — also automatically for videos without captions.
 
 ### Export / Import
 

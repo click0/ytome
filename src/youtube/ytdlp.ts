@@ -314,20 +314,18 @@ export interface SearchResult {
 }
 
 /**
- * Пошук через yt-dlp ("ytsearchN:" / "ytsearchdateN:") — без API-ключа й квоти
- * (search.list коштує 100 одиниць). Плоский режим: без відкриття кожного відео.
+ * Пошук через yt-dlp ("ytsearchN:") — без API-ключа й квоти (search.list коштує
+ * 100 одиниць). Плоский режим: без відкриття кожного відео. Лише за релевантністю:
+ * yt-dlp прибрав "ytsearchdate", а сортування за датою в URL пошуку YouTube ігнорує.
  */
-export async function searchVideos(query: string, opts: {
-  limit?: number; sort?: 'relevance' | 'date';
-} = {}): Promise<SearchResult[]> {
+export async function searchVideos(query: string, opts: { limit?: number } = {}): Promise<SearchResult[]> {
   const check = await checkYtDlp();
   if (!check.available) {
     throw new Error('yt-dlp not found. Install from https://github.com/yt-dlp/yt-dlp or set YTDLP_BIN in .env');
   }
   const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
-  const prefix = opts.sort === 'date' ? 'ytsearchdate' : 'ytsearch';
   const args = [
-    `${prefix}${limit}:${query}`,
+    `ytsearch${limit}:${query}`,
     '--flat-playlist', '--dump-single-json',
     '--no-warnings', '--quiet',
     '--retries', '3',
