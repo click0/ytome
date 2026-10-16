@@ -2,7 +2,7 @@
  * yt-dlp: аргументи (надійність, формати, cookies, проксі), завантаження
  * й субтитри — child_process підмінено, справжній процес не запускається.
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { useTempStorage, initTestDb, cleanup } from './helpers/temp-db';
@@ -159,6 +159,64 @@ describe('downloadSubtitles', () => {
 
     proc.handler = () => new Error('HTTP Error 429');
     expect(await y.downloadSubtitles('vid00000004')).toBeNull();
+  });
+});
+
+describe('JS runtime for YouTube', () => {
+  let savedPath: string | undefined;
+  const binDir = () => path.join(tmp, 'bin');
+  beforeEach(() => {
+    savedPath = process.env.PATH;
+    delete process.env.YTDLP_JS_RUNTIME;
+    fs.rmSync(binDir(), { recursive: true, force: true });
+    fs.mkdirSync(binDir(), { recursive: true });
+    process.env.PATH = binDir();          // ані deno, ані інших програм
+  });
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    delete process.env.YTDLP_JS_RUNTIME;
+  });
+
+  it('parses stable, patch and nightly versions', () => {
+    expect(y.parseYtDlpVersion('2025.11.12')).toEqual([2025, 11, 12]);
+    expect(y.parseYtDlpVersion('2026.01.05.1\n')).toEqual([2026, 1, 5]);
+    expect(y.parseYtDlpVersion('2025.12.31.232920')).toEqual([2025, 12, 31]);
+    expect(y.parseYtDlpVersion('unknown')).toBeNull();
+  });
+
+  it('without deno: enables the Node ytome runs on', () => {
+    expect(y.jsRuntimeArgs('2025.11.12')).toEqual(['--js-runtimes', `node:${process.execPath}`]);
+  });
+
+  it('with deno on PATH: nothing to add (yt-dlp enables deno itself)', () => {
+    const deno = path.join(binDir(), process.platform === 'win32' ? 'deno.exe' : 'deno');
+    fs.writeFileSync(deno, '');
+    expect(y.findExecutable('deno')).toBe(deno);
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual([]);
+  });
+
+  it('old yt-dlp or unknown version: the option would be rejected, so it is not sent', () => {
+    expect(y.jsRuntimeArgs('2025.10.22')).toEqual([]);
+    expect(y.jsRuntimeArgs(undefined)).toEqual([]);
+  });
+
+  it('YTDLP_JS_RUNTIME: explicit runtime or none', () => {
+    process.env.YTDLP_JS_RUNTIME = 'bun:/opt/bun/bin/bun';
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual(['--js-runtimes', 'bun:/opt/bun/bin/bun']);
+    process.env.YTDLP_JS_RUNTIME = 'none';
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual([]);
+  });
+
+  it('downloads and subtitle fetches pass the runtime to yt-dlp', async () => {
+    const file = path.join(storage, 'media', 'audio', 'vid00000001.mp3');
+    proc.handler = () => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'x'); return { stdout: file }; };
+    await y.downloadVideo('vid00000001');
+    expect(downloadCall().args.join(' ')).toContain(`--js-runtimes node:${process.execPath}`);
+
+    proc.calls = [];
+    proc.handler = () => ({});
+    await y.downloadSubtitles('vid00000001');
+    expect(downloadCall().args.join(' ')).toContain(`--js-runtimes node:${process.execPath}`);
   });
 });
 

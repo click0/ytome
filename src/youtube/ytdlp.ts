@@ -26,6 +26,57 @@ const RESILIENCE_ARGS = [
 ];
 
 // =============================================
+// JS-середовище (YouTube вимагає його з yt-dlp 2025.11.12)
+// =============================================
+
+/** Версія, з якої yt-dlp має --js-runtimes */
+export const JS_RUNTIMES_SINCE: [number, number, number] = [2025, 11, 12];
+
+/** "2025.11.12" / "2025.11.12.1" / нічна "2025.11.12.232920" → [рік, місяць, день] */
+export function parseYtDlpVersion(version?: string): [number, number, number] | null {
+  const m = version?.trim().match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.\d+)?$/);
+  return m ? [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])] : null;
+}
+
+function versionAtLeast(v: [number, number, number], min: [number, number, number]): boolean {
+  for (let i = 0; i < 3; i++) if (v[i] !== min[i]) return v[i] > min[i];
+  return true;
+}
+
+/** Повний шлях до програми в PATH (з PATHEXT на Windows) або null */
+export function findExecutable(name: string): string | null {
+  const exts = process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')]
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate;
+      } catch { /* немає — далі */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Аргументи JS-середовища для yt-dlp. Без нього YouTube віддає лише частину
+ * форматів або нічого. deno yt-dlp вмикає сам, Node — лише явно, тож за
+ * замовчуванням передаємо той Node, на якому працює ytome.
+ * YTDLP_JS_RUNTIME: auto (за замовч.) | none | deno | node | bun | quickjs | <назва>:<шлях>
+ */
+export function jsRuntimeArgs(version?: string): string[] {
+  const setting = (process.env.YTDLP_JS_RUNTIME || 'auto').trim();
+  if (setting === 'none') return [];
+  const v = parseYtDlpVersion(version);
+  if (!v || !versionAtLeast(v, JS_RUNTIMES_SINCE)) return [];   // старий yt-dlp не знає параметра
+  if (setting !== 'auto') return ['--js-runtimes', setting];
+  if (findExecutable('deno')) return [];                        // deno увімкнений за замовчуванням
+  return ['--js-runtimes', `node:${process.execPath}`];
+}
+
+// =============================================
 // Типи
 // =============================================
 
@@ -50,7 +101,7 @@ export interface DownloadResult {
 // Побудова аргументів yt-dlp
 // =============================================
 
-function buildArgs(videoId: string, opts: DownloadOptions): string[] {
+function buildArgs(videoId: string, opts: DownloadOptions, version?: string): string[] {
   const format = opts.format || 'audio';
   const outDir = opts.outDir || path.join(STORAGE_PATH, 'media', format);
 
@@ -66,6 +117,7 @@ function buildArgs(videoId: string, opts: DownloadOptions): string[] {
     '--quiet',
     '--print', 'after_move:filepath',   // виводить фінальний шлях
     ...RESILIENCE_ARGS,
+    ...jsRuntimeArgs(version),
   ];
 
   // Формат
@@ -135,7 +187,7 @@ function buildProxyArg(): string | null {
 
 export async function checkYtDlp(): Promise<{ available: boolean; version?: string }> {
   try {
-    const { stdout } = await execFileAsync(YTDLP_BIN, ['--version']);
+    const { stdout } = await execFileAsync(YTDLP_BIN, ['--version'], { timeout: 15_000 });
     return { available: true, version: stdout.trim() };
   } catch {
     return { available: false };
@@ -158,7 +210,7 @@ export async function downloadVideo(
     );
   }
 
-  const args     = buildArgs(videoId, opts);
+  const args     = buildArgs(videoId, opts, check.version);
   const format   = opts.format || 'audio';
 
   log.info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
@@ -221,6 +273,7 @@ export async function downloadSubtitles(
     '--quiet',
     '--no-warnings',
     '--retries', '5',
+    ...jsRuntimeArgs(check.version),
   ];
 
   if (cookiePath && fs.existsSync(cookiePath)) {
