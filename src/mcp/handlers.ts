@@ -4,7 +4,7 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createLogger } from '../logger';
 import { validateArgs } from './validation';
 import { getDb } from '../db/init';
-import { redactCredentials } from '../redact';
+import { redactCredentials, safeErrorMessage } from '../redact';
 
 const log = createLogger('mcp');
 
@@ -40,6 +40,7 @@ import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlayl
 import { exportLibrary } from '../export/library';
 import { exportTranscriptToFile, formatTimestamp } from '../export/transcript';
 import { TranscriptUnavailableError } from '../youtube/transcript-errors';
+import { whisperProvider, transcribeWithWhisper } from '../youtube/whisper';
 import {
   summarizeVideo, setChannelAutoSummary, pendingSummaries, processSummaryQueue, buildDigest,
   getTldrs, summaryAsText, chapterLink,
@@ -138,6 +139,21 @@ export const TOOLS: Tool[] = [
         language:      { type: 'string', description: 'Мова субтитрів (uk, ru, en…). Пусто = перша доступна' },
         timestamps:    { type: 'boolean', description: 'Рядки з таймкодами [mm:ss] замість суцільного тексту' },
         force_refresh: { type: 'boolean', description: 'Ігнорувати кеш і завантажити заново' },
+      },
+      required: ['video_id'],
+    },
+  },
+  {
+    name: 'transcribe_audio',
+    description: 'Розпізнати мовлення відео через Whisper, коли субтитрів немає: аудіо качається через yt-dlp ' +
+      'і надсилається ОДНОМУ провайдеру (Groq whisper-large-v3 — безкоштовно, або OpenAI whisper-1). ' +
+      'Результат з таймкодами зберігається як транскрипт відео. Потрібен ffmpeg',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_id: { type: 'string', description: 'YouTube video ID або URL' },
+        language: { type: 'string', description: 'Мова мовлення (uk, en…) — підвищує точність. Пусто = автовизначення' },
+        provider: { type: 'string', enum: ['groq', 'openai'], description: 'Пусто = перший з налаштованим ключем (Groq, потім OpenAI)' },
       },
       required: ['video_id'],
     },
@@ -931,6 +947,34 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       } catch (e) {
         return transcriptErr(e);
       }
+    }
+
+    case 'transcribe_audio': {
+      const videoId = extractVideoId(args.video_id);
+      const provider = whisperProvider({ explicit: true, preferred: args.provider });
+      if (!provider) {
+        return err(`No Whisper provider: set ${args.provider === 'openai' ? 'OPENAI_API_KEY' : 'GROQ_API_KEY (free tier) or OPENAI_API_KEY'} in .env`);
+      }
+      let r;
+      try {
+        r = await transcribeWithWhisper(videoId, {
+          provider, lang: args.language, cookiePath: profileOptsForVideo(videoId).cookiePath,
+        });
+      } catch (e) {
+        return err(safeErrorMessage(e));
+      }
+      const saved = saveTranscriptForVideo(videoId, r);
+      return ok({
+        video_id: videoId,
+        provider,
+        source: r.source,
+        language: r.language,
+        saved,
+        ...(saved ? {} : { note: 'Відео поза архівом — транскрипт не збережено' }),
+        segments: r.segments.length,
+        chars: r.text.length,
+        text: r.text,
+      });
     }
 
     case 'summarize_video': {

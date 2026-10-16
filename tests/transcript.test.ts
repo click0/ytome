@@ -21,6 +21,11 @@ vi.mock('../src/youtube/ytdlp', () => ({
   downloadSubtitles: async () => null,
   srtToText: (s: string) => s,
 }));
+const whisper = vi.hoisted(() => ({ provider: vi.fn(), transcribe: vi.fn() }));
+vi.mock('../src/youtube/whisper', () => ({
+  whisperProvider: whisper.provider,
+  transcribeWithWhisper: whisper.transcribe,
+}));
 
 const libErr = (name: string, message = name) => Object.assign(new Error(message), { name });
 
@@ -125,7 +130,11 @@ function youtube(player: unknown, transcriptXml = '') {
 }
 
 describe('fetchTranscript (hook contract)', () => {
-  beforeEach(() => { axiosRequest.mockReset(); });
+  beforeEach(() => {
+    axiosRequest.mockReset();
+    whisper.provider.mockReset().mockReturnValue(null);
+    whisper.transcribe.mockReset();
+  });
 
   it('returns segments — hooks give the library a Response-like object', async () => {
     youtube(
@@ -166,5 +175,41 @@ describe('fetchTranscript (hook contract)', () => {
     youtube({ playabilityStatus: { status: 'OK' } });
     const { fetchTranscript } = await import('../src/youtube/api');
     await expect(fetchTranscript('dQw4w9WgXcQ')).rejects.toMatchObject({ reason: 'no_captions' });
+  });
+
+  it('no captions + Whisper allowed → the audio is transcribed', async () => {
+    youtube({ playabilityStatus: { status: 'OK' } });
+    whisper.provider.mockReturnValue('groq');
+    whisper.transcribe.mockResolvedValue({ text: 'spoken', segments: [{ start: 0, dur: 1, text: 'spoken' }], language: 'en', source: 'whisper:groq' });
+    const { fetchTranscript } = await import('../src/youtube/api');
+    const r = await fetchTranscript('dQw4w9WgXcQ', 'en', { cookiePath: '/c.txt' });
+    expect(r.source).toBe('whisper:groq');
+    expect(whisper.transcribe).toHaveBeenCalledWith('dQw4w9WgXcQ', { provider: 'groq', lang: 'en', cookiePath: '/c.txt' });
+  });
+
+  it('Whisper failure → reason "error" (retryable), with both causes in the message', async () => {
+    youtube({ playabilityStatus: { status: 'OK' } });
+    whisper.provider.mockReturnValue('groq');
+    whisper.transcribe.mockRejectedValue(new Error('groq Whisper HTTP 429: rate limit'));
+    const { fetchTranscript } = await import('../src/youtube/api');
+    const e = await fetchTranscript('dQw4w9WgXcQ').catch(x => x);
+    expect(e).toMatchObject({ name: 'TranscriptUnavailableError', reason: 'error' });
+    expect(e.message).toMatch(/субтитрів немає.*Whisper, groq.*429/);
+  });
+
+  it('IP block is not sent to Whisper (the audio download would be blocked too)', async () => {
+    youtube({ playabilityStatus: { status: 'LOGIN_REQUIRED', reason: "Sign in to confirm you're not a bot" } });
+    whisper.provider.mockReturnValue('groq');
+    const { fetchTranscript } = await import('../src/youtube/api');
+    await expect(fetchTranscript('dQw4w9WgXcQ')).rejects.toMatchObject({ reason: 'blocked' });
+    expect(whisper.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('without Whisper the no_captions message says how to enable it', async () => {
+    youtube({ playabilityStatus: { status: 'OK' } });
+    const { fetchTranscript } = await import('../src/youtube/api');
+    const e = await fetchTranscript('dQw4w9WgXcQ').catch(x => x);
+    expect(e.reason).toBe('no_captions');
+    expect(e.message).toMatch(/transcribe_audio/);
   });
 });

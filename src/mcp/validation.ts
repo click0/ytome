@@ -386,6 +386,12 @@ export const digestSchema = z.object({
   channel: z.string().optional(),
 });
 
+export const transcribeAudioSchema = z.object({
+  video_id: videoIdOrUrl,
+  language: languageCode.optional(),
+  provider: z.enum(['groq', 'openai']).optional(),
+});
+
 export const SCHEMAS: Record<string, z.ZodType> = {
   subscribe:          subscribeSchema,
   list_subscriptions: listSubscriptionsSchema,
@@ -452,6 +458,8 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   summary_auto:    summaryAutoSchema,
   summary_run:     summaryRunSchema,
   digest:          digestSchema,
+
+  transcribe_audio: transcribeAudioSchema,
 };
 
 /**

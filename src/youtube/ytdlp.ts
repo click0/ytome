@@ -300,6 +300,55 @@ export async function downloadSubtitles(
 }
 
 // =============================================
+// Аудіо для розпізнавання (Whisper)
+// =============================================
+
+/**
+ * Лише аудіодоріжка в outDir (без перекодування — це робить ffmpeg).
+ * Відео довші за maxDurationSec yt-dlp пропускає, не завантажуючи.
+ */
+export async function downloadAudioForTranscription(
+  videoId: string,
+  outDir: string,
+  opts: { cookiePath?: string; maxDurationSec?: number } = {},
+): Promise<string> {
+  const check = await checkYtDlp();
+  if (!check.available) {
+    throw new Error('yt-dlp not found. Install from https://github.com/yt-dlp/yt-dlp or set YTDLP_BIN in .env');
+  }
+
+  const args = [
+    `https://www.youtube.com/watch?v=${videoId}`,
+    '--no-playlist',
+    '-f', 'bestaudio/best',
+    '--output', path.join(outDir, '%(id)s.%(ext)s'),
+    '--no-warnings',
+    '--quiet',
+    '--print', 'after_move:filepath',
+    ...RESILIENCE_ARGS,
+    ...jsRuntimeArgs(check.version),
+  ];
+  if (opts.maxDurationSec) args.push('--match-filter', `duration <=? ${opts.maxDurationSec}`);
+  if (opts.cookiePath && fs.existsSync(opts.cookiePath)) args.push('--cookies', opts.cookiePath);
+  const proxyArg = buildProxyArg();
+  if (proxyArg) args.push('--proxy', proxyArg);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+  } catch (e) {
+    throw new Error(safeErrorMessage(e));
+  }
+  const filePath = stdout.trim().split('\n').pop()?.trim();
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error(opts.maxDurationSec
+      ? `audio not downloaded (video longer than ${Math.round(opts.maxDurationSec / 60)} min, or unavailable)`
+      : 'audio not downloaded');
+  }
+  return filePath;
+}
+
+// =============================================
 // Парсер SRT → чистий текст
 // =============================================
 

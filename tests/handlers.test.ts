@@ -21,6 +21,7 @@ const m = vi.hoisted(() => ({
   fetchPlaylistInfo: vi.fn(),
   fetchPlaylistTracks: vi.fn(),
   checkAllProviders: vi.fn(),
+  transcribeWithWhisper: vi.fn(),
 }));
 
 vi.mock('../src/youtube/api', async (orig) => {
@@ -62,6 +63,10 @@ vi.mock('../src/ai/balancer', () => ({
   getAIUsageStats: () => [{ provider: 'groq', total_cost_usd: 0.0012344 }, { provider: 'claude', total_cost_usd: 0.002 }],
 }));
 vi.mock('../src/ai/providers', () => ({ checkAllProviders: m.checkAllProviders }));
+vi.mock('../src/youtube/whisper', async (orig) => ({
+  ...(await orig<typeof import('../src/youtube/whisper')>()),
+  transcribeWithWhisper: m.transcribeWithWhisper,
+}));
 
 const { tmp, storage } = useTempStorage('handlers');
 delete process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
@@ -488,5 +493,29 @@ describe('AI summaries', () => {
     expect(fs.existsSync(d.data.path)).toBe(true);
     expect((await call('digest', { channel: '@nobody' })).error).toMatch(/Channel not found/);
     expect((await call('digest', { channel: '@alpha' })).data.videos).toBe(0); // за 1 день — нічого
+  });
+});
+
+describe('transcribe_audio', () => {
+  it('needs a Whisper key; otherwise transcribes, stores as source=whisper and returns the text', async () => {
+    delete process.env.GROQ_API_KEY; delete process.env.OPENAI_API_KEY;
+    expect((await call('transcribe_audio', { video_id: 'vidBeta0001' })).error).toMatch(/GROQ_API_KEY/);
+    expect((await call('transcribe_audio', { video_id: 'vidBeta0001', provider: 'openai' })).error).toMatch(/OPENAI_API_KEY in \.env/);
+
+    process.env.GROQ_API_KEY = 'gsk';
+    m.transcribeWithWhisper.mockResolvedValueOnce({
+      text: 'Spoken words', segments: [{ start: 0, dur: 2, text: 'Spoken words' }], language: 'en', source: 'whisper:groq',
+    });
+    const r = await call('transcribe_audio', { video_id: 'https://youtu.be/vidBeta0001', language: 'en' });
+    expect(r.data).toMatchObject({ video_id: 'vidBeta0001', provider: 'groq', saved: true, segments: 1, text: 'Spoken words' });
+    expect(m.transcribeWithWhisper.mock.calls[0]).toEqual(['vidBeta0001', { provider: 'groq', lang: 'en', cookiePath: undefined }]);
+    const row: any = init.getDb().prepare(`
+      SELECT t.source, t.language FROM transcripts t JOIN videos v ON v.id = t.video_id WHERE v.youtube_id = 'vidBeta0001'
+    `).get();
+    expect(row).toEqual({ source: 'whisper', language: 'en' });
+
+    m.transcribeWithWhisper.mockRejectedValueOnce(new Error('ffmpeg не знайдено'));
+    expect((await call('transcribe_audio', { video_id: 'outside0001' })).error).toMatch(/ffmpeg/);
+    delete process.env.GROQ_API_KEY;
   });
 });
