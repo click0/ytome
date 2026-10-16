@@ -18,9 +18,11 @@ const m = vi.hoisted(() => ({
   checkChannel: vi.fn(),
   checkAllChannels: vi.fn(),
   downloadVideo: vi.fn(),
+  searchVideos: vi.fn(),
   fetchPlaylistInfo: vi.fn(),
   fetchPlaylistTracks: vi.fn(),
   checkAllProviders: vi.fn(),
+  transcribeWithWhisper: vi.fn(),
 }));
 
 vi.mock('../src/youtube/api', async (orig) => {
@@ -44,6 +46,7 @@ vi.mock('../src/scheduler/index', () => ({
 vi.mock('../src/youtube/ytdlp', async (orig) => ({
   ...(await orig<typeof import('../src/youtube/ytdlp')>()),
   downloadVideo: m.downloadVideo,
+  searchVideos: m.searchVideos,
 }));
 vi.mock('../src/youtube/music', async (orig) => ({
   ...(await orig<typeof import('../src/youtube/music')>()),
@@ -62,6 +65,10 @@ vi.mock('../src/ai/balancer', () => ({
   getAIUsageStats: () => [{ provider: 'groq', total_cost_usd: 0.0012344 }, { provider: 'claude', total_cost_usd: 0.002 }],
 }));
 vi.mock('../src/ai/providers', () => ({ checkAllProviders: m.checkAllProviders }));
+vi.mock('../src/youtube/whisper', async (orig) => ({
+  ...(await orig<typeof import('../src/youtube/whisper')>()),
+  transcribeWithWhisper: m.transcribeWithWhisper,
+}));
 
 const { tmp, storage } = useTempStorage('handlers');
 delete process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE;
@@ -326,6 +333,15 @@ describe('proxies, filters, quota, groups', () => {
     expect((await call('proxy_test')).data).toEqual({ total: 0, healthy: 0, results: [] });
   });
 
+  it('proxy credentials never reach the chat', async () => {
+    const add = await call('proxy_add', { url: 'http://user:s3cret@127.0.0.1:9' });
+    expect(add.data.proxy.url).toBe('http://***@127.0.0.1:9');
+    const test = await call('proxy_test');
+    expect(test.data.results[0]).toMatchObject({ url: 'http://***@127.0.0.1:9', status: '❌ fail' });
+    expect(JSON.stringify(add.data) + JSON.stringify(test.data)).not.toContain('s3cret');
+    await call('proxy_remove', { id: add.data.proxy.id });
+  });
+
   it('filter tools', async () => {
     const w = await call('filter_add', { type: 'whitelist', scope: 'channel', value: 'UCalpha' });
     await call('filter_add', { type: 'blacklist', scope: 'description', value: 'spam' });
@@ -479,5 +495,46 @@ describe('AI summaries', () => {
     expect(fs.existsSync(d.data.path)).toBe(true);
     expect((await call('digest', { channel: '@nobody' })).error).toMatch(/Channel not found/);
     expect((await call('digest', { channel: '@alpha' })).data.videos).toBe(0); // за 1 день — нічого
+  });
+});
+
+describe('transcribe_audio', () => {
+  it('needs a Whisper key; otherwise transcribes, stores as source=whisper and returns the text', async () => {
+    delete process.env.GROQ_API_KEY; delete process.env.OPENAI_API_KEY;
+    expect((await call('transcribe_audio', { video_id: 'vidBeta0001' })).error).toMatch(/GROQ_API_KEY/);
+    expect((await call('transcribe_audio', { video_id: 'vidBeta0001', provider: 'openai' })).error).toMatch(/OPENAI_API_KEY in \.env/);
+
+    process.env.GROQ_API_KEY = 'gsk';
+    m.transcribeWithWhisper.mockResolvedValueOnce({
+      text: 'Spoken words', segments: [{ start: 0, dur: 2, text: 'Spoken words' }], language: 'en', source: 'whisper:groq',
+    });
+    const r = await call('transcribe_audio', { video_id: 'https://youtu.be/vidBeta0001', language: 'en' });
+    expect(r.data).toMatchObject({ video_id: 'vidBeta0001', provider: 'groq', saved: true, segments: 1, text: 'Spoken words' });
+    expect(m.transcribeWithWhisper.mock.calls[0]).toEqual(['vidBeta0001', { provider: 'groq', lang: 'en', cookiePath: undefined }]);
+    const row: any = init.getDb().prepare(`
+      SELECT t.source, t.language FROM transcripts t JOIN videos v ON v.id = t.video_id WHERE v.youtube_id = 'vidBeta0001'
+    `).get();
+    expect(row).toEqual({ source: 'whisper', language: 'en' });
+
+    m.transcribeWithWhisper.mockRejectedValueOnce(new Error('ffmpeg не знайдено'));
+    expect((await call('transcribe_audio', { video_id: 'outside0001' })).error).toMatch(/ffmpeg/);
+    delete process.env.GROQ_API_KEY;
+  });
+});
+
+describe('search_videos', () => {
+  it('returns results with the in-archive flag and zero quota', async () => {
+    m.searchVideos.mockResolvedValueOnce([
+      { youtube_id: 'vidAlpha001', title: 'Alpha one', url: 'https://youtube.com/watch?v=vidAlpha001' },
+      { youtube_id: 'newVideo001', title: 'New', url: 'https://youtube.com/watch?v=newVideo001' },
+    ]);
+    const r = await call('search_videos', { query: 'alpha', limit: 2 });
+    expect(m.searchVideos).toHaveBeenCalledWith('alpha', { limit: 2 });
+    expect(r.data).toMatchObject({ total: 2, quota_used: 0 });
+    expect(r.data.results.map((x: any) => [x.youtube_id, x.in_archive])).toEqual([['vidAlpha001', true], ['newVideo001', false]]);
+
+    expect((await call('search_videos', { query: '   ' })).error).toMatch(/query is required/);
+    m.searchVideos.mockRejectedValueOnce(new Error('yt-dlp not found'));
+    expect((await call('search_videos', { query: 'x' })).error).toMatch(/yt-dlp not found/);
   });
 });

@@ -147,6 +147,7 @@ export function saveTranscript(
       text      = excluded.text,
       segments  = excluded.segments,
       language  = excluded.language,
+      source    = excluded.source,
       fetched_at = CURRENT_TIMESTAMP
   `).run(videoDbId, language, text, JSON.stringify(segments), source);
 }
@@ -154,12 +155,12 @@ export function saveTranscript(
 /** Закешувати транскрипт, якщо відео є в архіві; true — збережено */
 export function saveTranscriptForVideo(
   videoYoutubeId: string,
-  t: { text: string; segments: any[]; language: string },
+  t: { text: string; segments: any[]; language: string; source?: string },
 ): boolean {
   const video = getDb().prepare('SELECT id FROM videos WHERE youtube_id = ?').get(videoYoutubeId) as
     { id: number } | undefined;
   if (!video) return false;
-  saveTranscript(video.id, t.text, t.segments, t.language);
+  saveTranscript(video.id, t.text, t.segments, t.language, t.source?.startsWith('whisper') ? 'whisper' : 'youtube');
   return true;
 }
 

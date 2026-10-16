@@ -4,13 +4,14 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { createLogger } from '../logger';
 import { validateArgs } from './validation';
 import { getDb } from '../db/init';
+import { redactCredentials, safeErrorMessage } from '../redact';
 
 const log = createLogger('mcp');
 
 import {
   getChannels, addChannel, getChannel, getNewVideos,
   getUnseenVideos, markAsSeen, getTranscript, saveTranscript, saveTranscriptForVideo,
-  hasTranscript, createGroup, addChannelToGroup, getGroups,
+  hasTranscript, createGroup, addChannelToGroup, getGroups, getKnownVideoIds,
 } from '../db/queries';
 import {
   addToWatchLater, getWatchLater, updateWatchLaterStatus,
@@ -27,7 +28,7 @@ import { getVideoCacheStatus, getBatchCacheStatus, getTranscriptCached, getComme
 import { getRoutingInfo, getAIUsageStats, getMode } from '../ai/balancer';
 import { checkAllProviders } from '../ai/providers';
 import { checkClaudeModels } from '../ai/claude';
-import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp } from '../youtube/ytdlp';
+import { downloadVideo, downloadSubtitles, srtToText, checkYtDlp, searchVideos } from '../youtube/ytdlp';
 import { addFilterRule, removeFilterRule, setFilterEnabled, listFilterRules, clearFilterRules } from '../filters/index';
 import { getQuotaStatus, getQuotaHistory, getQuotaBreakdown, QUOTA_COSTS } from '../db/quota';
 import { addProfile, removeProfile, listProfiles, setDefaultProfile, assignChannelProfile, profileOptsForVideo } from '../profiles/manager';
@@ -39,6 +40,8 @@ import { addMusicPlaylist, getMusicPlaylists, getMusicPlaylist, removeMusicPlayl
 import { exportLibrary } from '../export/library';
 import { exportTranscriptToFile, formatTimestamp } from '../export/transcript';
 import { TranscriptUnavailableError } from '../youtube/transcript-errors';
+import { whisperProvider, transcribeWithWhisper } from '../youtube/whisper';
+import { runDoctor } from '../doctor/index';
 import {
   summarizeVideo, setChannelAutoSummary, pendingSummaries, processSummaryQueue, buildDigest,
   getTldrs, summaryAsText, chapterLink,
@@ -137,6 +140,45 @@ export const TOOLS: Tool[] = [
         language:      { type: 'string', description: 'Мова субтитрів (uk, ru, en…). Пусто = перша доступна' },
         timestamps:    { type: 'boolean', description: 'Рядки з таймкодами [mm:ss] замість суцільного тексту' },
         force_refresh: { type: 'boolean', description: 'Ігнорувати кеш і завантажити заново' },
+      },
+      required: ['video_id'],
+    },
+  },
+  {
+    name: 'doctor',
+    description: 'Діагностика ytome: yt-dlp і JS-середовище, ffmpeg, ключ YouTube API і квота, база й місце на диску, ' +
+      'cookies профілів, проксі, AI-провайдери, Whisper, Google. Для кожної проблеми — як виправити',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        network: { type: 'boolean', description: 'Також перевірити ключ YouTube API (1 одиниця квоти), проксі й AI-провайдерів через мережу' },
+      },
+    },
+  },
+  {
+    name: 'search_videos',
+    description: 'Пошук відео на YouTube через yt-dlp — без API-ключа й без витрат квоти ' +
+      '(search.list коштує 100 одиниць). Порядок — за релевантністю. Позначає відео, що вже є в архіві',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Пошуковий запит' },
+        limit: { type: 'number', description: 'Скільки результатів (1–50, за замовчуванням 10)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'transcribe_audio',
+    description: 'Розпізнати мовлення відео через Whisper, коли субтитрів немає: аудіо качається через yt-dlp ' +
+      'і надсилається ОДНОМУ провайдеру (Groq whisper-large-v3 — безкоштовно, або OpenAI whisper-1). ' +
+      'Результат з таймкодами зберігається як транскрипт відео. Потрібен ffmpeg',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        video_id: { type: 'string', description: 'YouTube video ID або URL' },
+        language: { type: 'string', description: 'Мова мовлення (uk, en…) — підвищує точність. Пусто = автовизначення' },
+        provider: { type: 'string', enum: ['groq', 'openai'], description: 'Пусто = перший з налаштованим ключем (Groq, потім OpenAI)' },
       },
       required: ['video_id'],
     },
@@ -932,6 +974,54 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       }
     }
 
+    case 'doctor': {
+      return ok(await runDoctor({ network: args.network }));
+    }
+
+    case 'search_videos': {
+      let results;
+      try {
+        results = await searchVideos(args.query, { limit: args.limit });
+      } catch (e) {
+        return err(safeErrorMessage(e));
+      }
+      const known = getKnownVideoIds(results.map(r => r.youtube_id));
+      return ok({
+        query: args.query,
+        total: results.length,
+        quota_used: 0,
+        results: results.map(r => ({ ...r, in_archive: known.has(r.youtube_id) })),
+      });
+    }
+
+    case 'transcribe_audio': {
+      const videoId = extractVideoId(args.video_id);
+      const provider = whisperProvider({ explicit: true, preferred: args.provider });
+      if (!provider) {
+        return err(`No Whisper provider: set ${args.provider === 'openai' ? 'OPENAI_API_KEY' : 'GROQ_API_KEY (free tier) or OPENAI_API_KEY'} in .env`);
+      }
+      let r;
+      try {
+        r = await transcribeWithWhisper(videoId, {
+          provider, lang: args.language, cookiePath: profileOptsForVideo(videoId).cookiePath,
+        });
+      } catch (e) {
+        return err(safeErrorMessage(e));
+      }
+      const saved = saveTranscriptForVideo(videoId, r);
+      return ok({
+        video_id: videoId,
+        provider,
+        source: r.source,
+        language: r.language,
+        saved,
+        ...(saved ? {} : { note: 'Відео поза архівом — транскрипт не збережено' }),
+        segments: r.segments.length,
+        chars: r.text.length,
+        text: r.text,
+      });
+    }
+
     case 'summarize_video': {
       const videoId = extractVideoId(args.video_id);
       let r;
@@ -1285,7 +1375,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'proxy_add': {
       const p = addProxy({ url: args.url, label: args.label, enabled: args.enabled });
-      return ok({ success: true, proxy: { id: p.id, url: p.url, label: p.label, protocol: p.protocol } });
+      return ok({ success: true, proxy: { id: p.id, url: redactCredentials(p.url), label: p.label, protocol: p.protocol } });
     }
 
     case 'proxy_list': {
@@ -1323,10 +1413,10 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         results: results.map(r => ({
           id:        r.id,
           label:     r.label,
-          url:       r.url,
+          url:       redactCredentials(r.url),
           status:    r.ok ? '✅ ok' : '❌ fail',
           latency:   r.latencyMs ? `${r.latencyMs}ms` : undefined,
-          error:     r.error,
+          error:     r.error && redactCredentials(r.error),
         })),
       });
     }

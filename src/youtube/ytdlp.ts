@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { getNextProxy, getProxyMode } from '../proxy/manager';
 import { createLogger } from '../logger';
+import { redactCredentials, safeErrorMessage } from '../redact';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('ytdlp');
@@ -23,6 +24,57 @@ const RESILIENCE_ARGS = [
   '--fragment-retries', '10',
   '--retry-sleep', 'exp=1:120',
 ];
+
+// =============================================
+// JS-середовище (YouTube вимагає його з yt-dlp 2025.11.12)
+// =============================================
+
+/** Версія, з якої yt-dlp має --js-runtimes */
+export const JS_RUNTIMES_SINCE: [number, number, number] = [2025, 11, 12];
+
+/** "2025.11.12" / "2025.11.12.1" / нічна "2025.11.12.232920" → [рік, місяць, день] */
+export function parseYtDlpVersion(version?: string): [number, number, number] | null {
+  const m = version?.trim().match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.\d+)?$/);
+  return m ? [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])] : null;
+}
+
+function versionAtLeast(v: [number, number, number], min: [number, number, number]): boolean {
+  for (let i = 0; i < 3; i++) if (v[i] !== min[i]) return v[i] > min[i];
+  return true;
+}
+
+/** Повний шлях до програми в PATH (з PATHEXT на Windows) або null */
+export function findExecutable(name: string): string | null {
+  const exts = process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')]
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate;
+      } catch { /* немає — далі */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Аргументи JS-середовища для yt-dlp. Без нього YouTube віддає лише частину
+ * форматів або нічого. deno yt-dlp вмикає сам, Node — лише явно, тож за
+ * замовчуванням передаємо той Node, на якому працює ytome.
+ * YTDLP_JS_RUNTIME: auto (за замовч.) | none | deno | node | bun | quickjs | <назва>:<шлях>
+ */
+export function jsRuntimeArgs(version?: string): string[] {
+  const setting = (process.env.YTDLP_JS_RUNTIME || 'auto').trim();
+  if (setting === 'none') return [];
+  const v = parseYtDlpVersion(version);
+  if (!v || !versionAtLeast(v, JS_RUNTIMES_SINCE)) return [];   // старий yt-dlp не знає параметра
+  if (setting !== 'auto') return ['--js-runtimes', setting];
+  if (findExecutable('deno')) return [];                        // deno увімкнений за замовчуванням
+  return ['--js-runtimes', `node:${process.execPath}`];
+}
 
 // =============================================
 // Типи
@@ -49,7 +101,7 @@ export interface DownloadResult {
 // Побудова аргументів yt-dlp
 // =============================================
 
-function buildArgs(videoId: string, opts: DownloadOptions): string[] {
+function buildArgs(videoId: string, opts: DownloadOptions, version?: string): string[] {
   const format = opts.format || 'audio';
   const outDir = opts.outDir || path.join(STORAGE_PATH, 'media', format);
 
@@ -65,6 +117,7 @@ function buildArgs(videoId: string, opts: DownloadOptions): string[] {
     '--quiet',
     '--print', 'after_move:filepath',   // виводить фінальний шлях
     ...RESILIENCE_ARGS,
+    ...jsRuntimeArgs(version),
   ];
 
   // Формат
@@ -134,7 +187,7 @@ function buildProxyArg(): string | null {
 
 export async function checkYtDlp(): Promise<{ available: boolean; version?: string }> {
   try {
-    const { stdout } = await execFileAsync(YTDLP_BIN, ['--version']);
+    const { stdout } = await execFileAsync(YTDLP_BIN, ['--version'], { timeout: 15_000 });
     return { available: true, version: stdout.trim() };
   } catch {
     return { available: false };
@@ -157,25 +210,29 @@ export async function downloadVideo(
     );
   }
 
-  const args     = buildArgs(videoId, opts);
+  const args     = buildArgs(videoId, opts, check.version);
   const format   = opts.format || 'audio';
 
   log.info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
 
-  const { stdout, stderr } = await execFileAsync(YTDLP_BIN, args, {
-    timeout: DOWNLOAD_TIMEOUT_MS,
-  });
+  let stdout: string, stderr: string;
+  try {
+    ({ stdout, stderr } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+  } catch (e) {
+    // Повідомлення execFile містить увесь командний рядок, зокрема --proxy з паролем
+    throw new Error(safeErrorMessage(e));
+  }
 
   // --print after_move:filepath виводить шлях у stdout
   const lines = stdout.trim().split('\n');
   const lastLine = lines[lines.length - 1];
   if (!lastLine) {
-    throw new Error(`yt-dlp produced no output.\nstderr: ${stderr}`);
+    throw new Error(`yt-dlp produced no output.\nstderr: ${redactCredentials(stderr)}`);
   }
   const filePath = lastLine.trim();
 
   if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(`yt-dlp completed but output file not found.\nstderr: ${stderr}`);
+    throw new Error(`yt-dlp completed but output file not found.\nstderr: ${redactCredentials(stderr)}`);
   }
 
   const stat = fs.statSync(filePath);
@@ -216,6 +273,7 @@ export async function downloadSubtitles(
     '--quiet',
     '--no-warnings',
     '--retries', '5',
+    ...jsRuntimeArgs(check.version),
   ];
 
   if (cookiePath && fs.existsSync(cookiePath)) {
@@ -236,9 +294,119 @@ export async function downloadSubtitles(
     if (!anyPath) return null;
     return fs.readFileSync(anyPath, 'utf-8');
   } catch (e: any) {
-    log.error({ videoId, error: e.message }, 'subtitle download failed');
+    log.error({ videoId, error: safeErrorMessage(e) }, 'subtitle download failed');
     return null;
   }
+}
+
+// =============================================
+// Пошук відео без квоти YouTube Data API
+// =============================================
+
+export interface SearchResult {
+  youtube_id:   string;
+  title:        string;
+  channel?:     string;
+  channel_id?:  string;
+  duration_sec?: number;
+  view_count?:  number;
+  url:          string;
+}
+
+/**
+ * Пошук через yt-dlp ("ytsearchN:") — без API-ключа й квоти (search.list коштує
+ * 100 одиниць). Плоский режим: без відкриття кожного відео. Лише за релевантністю:
+ * yt-dlp прибрав "ytsearchdate", а сортування за датою в URL пошуку YouTube ігнорує.
+ */
+export async function searchVideos(query: string, opts: { limit?: number } = {}): Promise<SearchResult[]> {
+  const check = await checkYtDlp();
+  if (!check.available) {
+    throw new Error('yt-dlp not found. Install from https://github.com/yt-dlp/yt-dlp or set YTDLP_BIN in .env');
+  }
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
+  const args = [
+    `ytsearch${limit}:${query}`,
+    '--flat-playlist', '--dump-single-json',
+    '--no-warnings', '--quiet',
+    '--retries', '3',
+    ...jsRuntimeArgs(check.version),
+  ];
+  const proxyArg = buildProxyArg();
+  if (proxyArg) args.push('--proxy', proxyArg);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 }));
+  } catch (e) {
+    throw new Error(safeErrorMessage(e));
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    throw new Error('yt-dlp returned unreadable search results');
+  }
+  return (data.entries || [])
+    .filter((e: any) => e?.id && (e.ie_key === undefined || e.ie_key === 'Youtube'))
+    .map((e: any): SearchResult => ({
+      youtube_id: e.id,
+      title: e.title || 'Untitled',
+      channel: e.channel ?? e.uploader ?? undefined,
+      channel_id: e.channel_id ?? undefined,
+      duration_sec: typeof e.duration === 'number' ? Math.round(e.duration) : undefined,
+      view_count: typeof e.view_count === 'number' ? e.view_count : undefined,
+      url: `https://youtube.com/watch?v=${e.id}`,
+    }));
+}
+
+// =============================================
+// Аудіо для розпізнавання (Whisper)
+// =============================================
+
+/**
+ * Лише аудіодоріжка в outDir (без перекодування — це робить ffmpeg).
+ * Відео довші за maxDurationSec yt-dlp пропускає, не завантажуючи.
+ */
+export async function downloadAudioForTranscription(
+  videoId: string,
+  outDir: string,
+  opts: { cookiePath?: string; maxDurationSec?: number } = {},
+): Promise<string> {
+  const check = await checkYtDlp();
+  if (!check.available) {
+    throw new Error('yt-dlp not found. Install from https://github.com/yt-dlp/yt-dlp or set YTDLP_BIN in .env');
+  }
+
+  const args = [
+    `https://www.youtube.com/watch?v=${videoId}`,
+    '--no-playlist',
+    '-f', 'bestaudio/best',
+    '--output', path.join(outDir, '%(id)s.%(ext)s'),
+    '--no-warnings',
+    '--quiet',
+    '--print', 'after_move:filepath',
+    ...RESILIENCE_ARGS,
+    ...jsRuntimeArgs(check.version),
+  ];
+  if (opts.maxDurationSec) args.push('--match-filter', `duration <=? ${opts.maxDurationSec}`);
+  if (opts.cookiePath && fs.existsSync(opts.cookiePath)) args.push('--cookies', opts.cookiePath);
+  const proxyArg = buildProxyArg();
+  if (proxyArg) args.push('--proxy', proxyArg);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+  } catch (e) {
+    throw new Error(safeErrorMessage(e));
+  }
+  const filePath = stdout.trim().split('\n').pop()?.trim();
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error(opts.maxDurationSec
+      ? `audio not downloaded (video longer than ${Math.round(opts.maxDurationSec / 60)} min, or unavailable)`
+      : 'audio not downloaded');
+  }
+  return filePath;
 }
 
 // =============================================

@@ -8,7 +8,8 @@ import { axiosProxyConfig, googleApiProxyConfig, getNextProxy, buildAgent } from
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
-import { classifyTranscriptFailure, type TranscriptDiagnostics } from './transcript-errors';
+import { classifyTranscriptFailure, TranscriptUnavailableError, type TranscriptDiagnostics } from './transcript-errors';
+import { whisperProvider, transcribeWithWhisper } from './whisper';
 
 dotenv.config({ quiet: true });
 
@@ -335,7 +336,20 @@ export async function fetchTranscript(
       log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
     }
     // Причина — з основної спроби: там видно відповідь плеєра YouTube
-    throw classifyTranscriptFailure(videoId, primaryError, diag);
+    const failure = classifyTranscriptFailure(videoId, primaryError, diag);
+
+    // Субтитрів немає зовсім — розпізнаємо аудіо, якщо користувач це дозволив
+    const provider = failure.reason === 'no_captions' ? whisperProvider() : null;
+    if (provider) {
+      try {
+        return await transcribeWithWhisper(videoId, { provider, lang, cookiePath: opts.cookiePath });
+      } catch (e3) {
+        // 'error', а не 'no_captions': збій розпізнавання може минути — черга повторить
+        throw new TranscriptUnavailableError(videoId, 'error',
+          `${videoId}: субтитрів немає, а розпізнати аудіо (Whisper, ${provider}) не вдалось: ${(e3 as Error).message}`);
+      }
+    }
+    throw failure;
   }
 }
 

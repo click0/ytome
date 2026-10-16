@@ -70,7 +70,9 @@ export function classifyTranscriptFailure(
     return make('language', e.message || 'немає субтитрів потрібною мовою');
   }
   if (e.name === 'YoutubeTranscriptDisabledError' || status === 'OK') {
-    return make('no_captions', 'у відео немає субтитрів (ні ручних, ні автоматичних)');
+    return make('no_captions', 'у відео немає субтитрів (ні ручних, ні автоматичних). ' +
+      'Можна розпізнати аудіо: інструмент transcribe_audio (потрібен GROQ_API_KEY або OPENAI_API_KEY), ' +
+      'або WHISPER_PROVIDER=auto для автоматичного розпізнавання');
   }
   return make('error', e.message || 'невідома помилка');
 }

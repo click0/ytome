@@ -386,6 +386,21 @@ export const digestSchema = z.object({
   channel: z.string().optional(),
 });
 
+export const transcribeAudioSchema = z.object({
+  video_id: videoIdOrUrl,
+  language: languageCode.optional(),
+  provider: z.enum(['groq', 'openai']).optional(),
+});
+
+export const searchVideosSchema = z.object({
+  query: z.string().trim().min(1, 'query is required').max(200),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+export const doctorSchema = z.object({
+  network: z.boolean().optional(),
+});
+
 export const SCHEMAS: Record<string, z.ZodType> = {
   subscribe:          subscribeSchema,
   list_subscriptions: listSubscriptionsSchema,
@@ -452,6 +467,10 @@ export const SCHEMAS: Record<string, z.ZodType> = {
   summary_auto:    summaryAutoSchema,
   summary_run:     summaryRunSchema,
   digest:          digestSchema,
+
+  transcribe_audio: transcribeAudioSchema,
+  search_videos:    searchVideosSchema,
+  doctor:           doctorSchema,
 };
 
 /**

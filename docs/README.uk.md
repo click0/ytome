@@ -264,6 +264,8 @@ Linux:    ~/.config/Claude/claude_desktop_config.json
 | `get_transcript` | Транскрипція відео (кеш або завантажити). `language`, `force_refresh` |
 | `export_transcript` | Зберегти транскрипт у `storage/exports/transcripts/<id>.txt` (`timestamps: true` — рядки з `[mm:ss]`) |
 | `analyze_transcript` | Завантажити транскрипцію + вказівка для аналізу (summary/key_points/quotes/full) |
+| `transcribe_audio` | Субтитрів немає? Аудіо качається й розпізнається Whisper (Groq `whisper-large-v3` — безкоштовно, або OpenAI). З таймкодами, зберігається як транскрипт відео. Потрібен ffmpeg |
+| `search_videos` | Пошук на YouTube через yt-dlp — без API-ключа й квоти. Позначає відео, що вже є в архіві |
 | `get_comments` | Топ коментарі. Параметри: `limit`, `owner_only`, `with_replies` |
 
 ### AI-підсумки
@@ -293,6 +295,16 @@ TL;DR видно в `get_feed`, підсумок потрапляє в опис 
 | OpenAI або будь-який OpenAI-сумісний роутер | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (обов'язково) — усі запити йдуть туди, внутрішній балансувальник — запасний |
 
 `ai_status` з `check_health: true` показує, які провайдери відповідають.
+
+### Діагностика
+
+`doctor` (MCP-інструмент) або `npm run doctor [-- --network]` перевіряє yt-dlp і JS-середовище для нього (YouTube вимагає
+його з yt-dlp 2025.11.12; ytome передає свій Node, якщо немає deno, `YTDLP_JS_RUNTIME` — щоб змінити), ffmpeg, ключ
+YouTube API і квоту, базу й місце на диску, cookies профілів, проксі, AI-провайдери, Whisper і Google — для кожної проблеми
+з підказкою, як виправити. Мережеві перевірки — лише з `network: true`.
+
+Whisper надсилає аудіо одному провайдеру й лише за згодою: `WHISPER_PROVIDER=off` (за замовчуванням) — тільки через
+`transcribe_audio`; `auto` / `groq` / `openai` — також автоматично для відео без субтитрів.
 
 ### Експорт / Імпорт
 

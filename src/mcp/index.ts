@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { TOOLS, handleTool } from './handlers.js';
 import { createLogger } from '../logger.js';
+import { safeErrorMessage } from '../redact.js';
 
 const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')).version;
 
@@ -34,7 +35,7 @@ async function main() {
     try {
       return await handleTool(name, args || {});
     } catch (e: any) {
-      return err(e.message || 'Unknown error');
+      return err(safeErrorMessage(e));
     }
   });
 

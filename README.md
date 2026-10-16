@@ -252,6 +252,8 @@ Route AI requests through any OpenAI-compatible router via `AI_PROXY_URL` in `.e
 | `get_transcript` | Local cache first — network only if missing. `language`, `force_refresh` |
 | `export_transcript` | Save a transcript to `storage/exports/transcripts/<id>.txt` (title, channel, link; `timestamps: true` for `[mm:ss]` lines). Works for videos outside the archive |
 | `analyze_transcript` | Transcript + AI analysis (summary / key_points / quotes / full) |
+| `transcribe_audio` | No captions? Download the audio and transcribe it with Whisper (Groq `whisper-large-v3`, free tier, or OpenAI). Timecoded, saved as the video's transcript. Needs ffmpeg |
+| `search_videos` | Search YouTube via yt-dlp — no API key, no quota (`search.list` costs 100 units). Marks videos already in the archive |
 | `get_comments` | Top comments. Params: `limit`, `owner_only`. Cached locally |
 | `download` | Download via yt-dlp. `format`: audio / video / video_hd |
 
@@ -280,6 +282,16 @@ summaries and `evaluate_video`; in Claude Desktop / claude.ai, `analyze_transcri
 | OpenAI or any OpenAI-compatible router | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (required) — all requests go there, the internal balancer is the fallback |
 
 `ai_status` with `check_health: true` shows which providers answer.
+
+### Diagnostics
+`doctor` (MCP tool) or `npm run doctor [-- --network]` checks everything that can break: yt-dlp and its JavaScript runtime
+(YouTube needs one since yt-dlp 2025.11.12 — ytome passes its own Node unless deno is installed; `YTDLP_JS_RUNTIME` overrides),
+ffmpeg, YouTube API key and quota, database and free disk space, profile cookies (expired / expiring), proxies, AI providers,
+Whisper, Google. Every problem comes with a fix. Network checks (API key — 1 quota unit, proxies, AI) only with `network: true`.
+
+**Whisper consent:** audio goes to one provider and only with consent — `WHISPER_PROVIDER=off` (default) means only the explicit
+`transcribe_audio` call; `auto` / `groq` / `openai` also transcribe automatically when a video has no captions. Audio is never
+re-sent to a second provider.
 
 ### Cache & Offline
 | Tool | Description |

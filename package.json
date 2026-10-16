@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "check:version": "node scripts/check-version.mjs",
-    "smoke": "npm run build && node scripts/smoke.mjs"
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "doctor": "node dist/doctor/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

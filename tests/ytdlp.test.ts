@@ -2,7 +2,7 @@
  * yt-dlp: аргументи (надійність, формати, cookies, проксі), завантаження
  * й субтитри — child_process підмінено, справжній процес не запускається.
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { useTempStorage, initTestDb, cleanup } from './helpers/temp-db';
@@ -114,6 +114,15 @@ describe('downloadVideo', () => {
     expect(downloadCall().args).not.toContain('--proxy');
   });
 
+  it('a failed download does not leak proxy credentials from the command line', async () => {
+    px.addProxy({ url: 'socks5://user:s3cret@10.0.0.9:1080' });
+    px.setProxyMode('single');
+    proc.handler = (args) => new Error(`Command failed: yt-dlp ${args.join(' ')}\nERROR: 403`);
+    const e = await y.downloadVideo('vid00000001').catch(err => err);
+    expect(e.message).toContain('--proxy socks5://***@10.0.0.9:1080');
+    expect(e.message).not.toContain('s3cret');
+  });
+
   it('errors when yt-dlp prints nothing or the file is missing', async () => {
     proc.handler = () => ({ stdout: '', stderr: 'ERROR: boom' });
     await expect(y.downloadVideo('vid00000001')).rejects.toThrow(/produced no output[\s\S]*boom/);
@@ -150,6 +159,103 @@ describe('downloadSubtitles', () => {
 
     proc.handler = () => new Error('HTTP Error 429');
     expect(await y.downloadSubtitles('vid00000004')).toBeNull();
+  });
+});
+
+describe('JS runtime for YouTube', () => {
+  let savedPath: string | undefined;
+  const binDir = () => path.join(tmp, 'bin');
+  beforeEach(() => {
+    savedPath = process.env.PATH;
+    delete process.env.YTDLP_JS_RUNTIME;
+    fs.rmSync(binDir(), { recursive: true, force: true });
+    fs.mkdirSync(binDir(), { recursive: true });
+    process.env.PATH = binDir();          // ані deno, ані інших програм
+  });
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    delete process.env.YTDLP_JS_RUNTIME;
+  });
+
+  it('parses stable, patch and nightly versions', () => {
+    expect(y.parseYtDlpVersion('2025.11.12')).toEqual([2025, 11, 12]);
+    expect(y.parseYtDlpVersion('2026.01.05.1\n')).toEqual([2026, 1, 5]);
+    expect(y.parseYtDlpVersion('2025.12.31.232920')).toEqual([2025, 12, 31]);
+    expect(y.parseYtDlpVersion('unknown')).toBeNull();
+  });
+
+  it('without deno: enables the Node ytome runs on', () => {
+    expect(y.jsRuntimeArgs('2025.11.12')).toEqual(['--js-runtimes', `node:${process.execPath}`]);
+  });
+
+  it('with deno on PATH: nothing to add (yt-dlp enables deno itself)', () => {
+    const deno = path.join(binDir(), process.platform === 'win32' ? 'deno.exe' : 'deno');
+    fs.writeFileSync(deno, '');
+    // Windows: регістр не важливий, розширення приходить з PATHEXT (.EXE)
+    const norm = (p: string | null) => (process.platform === 'win32' ? p?.toLowerCase() : p);
+    expect(norm(y.findExecutable('deno'))).toBe(norm(deno));
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual([]);
+  });
+
+  it('old yt-dlp or unknown version: the option would be rejected, so it is not sent', () => {
+    expect(y.jsRuntimeArgs('2025.10.22')).toEqual([]);
+    expect(y.jsRuntimeArgs(undefined)).toEqual([]);
+  });
+
+  it('YTDLP_JS_RUNTIME: explicit runtime or none', () => {
+    process.env.YTDLP_JS_RUNTIME = 'bun:/opt/bun/bin/bun';
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual(['--js-runtimes', 'bun:/opt/bun/bin/bun']);
+    process.env.YTDLP_JS_RUNTIME = 'none';
+    expect(y.jsRuntimeArgs('2026.09.01')).toEqual([]);
+  });
+
+  it('downloads and subtitle fetches pass the runtime to yt-dlp', async () => {
+    const file = path.join(storage, 'media', 'audio', 'vid00000001.mp3');
+    proc.handler = () => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'x'); return { stdout: file }; };
+    await y.downloadVideo('vid00000001');
+    expect(downloadCall().args.join(' ')).toContain(`--js-runtimes node:${process.execPath}`);
+
+    proc.calls = [];
+    proc.handler = () => ({});
+    await y.downloadSubtitles('vid00000001');
+    expect(downloadCall().args.join(' ')).toContain(`--js-runtimes node:${process.execPath}`);
+  });
+});
+
+describe('searchVideos', () => {
+  const json = JSON.stringify({ entries: [
+    { id: 'vid00000001', title: 'First', channel: 'Chan', channel_id: 'UCc', duration: 61.7, view_count: 1000, ie_key: 'Youtube' },
+    { id: 'PLlist', title: 'A playlist', ie_key: 'YoutubeTab' },
+    { id: 'vid00000002', uploader: 'Up' },
+    null,
+  ] });
+
+  it('flat search, no quota: maps entries and skips playlists/channels', async () => {
+    proc.handler = () => ({ stdout: json });
+    const r = await y.searchVideos('rust tutorial', { limit: 5 });
+    expect(r).toEqual([
+      { youtube_id: 'vid00000001', title: 'First', channel: 'Chan', channel_id: 'UCc', duration_sec: 62, view_count: 1000, url: 'https://youtube.com/watch?v=vid00000001' },
+      { youtube_id: 'vid00000002', title: 'Untitled', channel: 'Up', channel_id: undefined, duration_sec: undefined, view_count: undefined, url: 'https://youtube.com/watch?v=vid00000002' },
+    ]);
+    const { args } = downloadCall();
+    expect(args[0]).toBe('ytsearch5:rust tutorial');
+    expect(args).toEqual(expect.arrayContaining(['--flat-playlist', '--dump-single-json']));
+  });
+
+  it('limit clamped to 1..50, a query cannot become an option', async () => {
+    proc.handler = () => ({ stdout: '{"entries": []}' });
+    await y.searchVideos('--exec rm', { limit: 500 });
+    expect(downloadCall().args[0]).toBe('ytsearch50:--exec rm');
+    proc.calls = [];
+    await y.searchVideos('x', { limit: 0 });
+    expect(downloadCall().args[0]).toBe('ytsearch1:x');
+  });
+
+  it('broken output and failures are errors without credentials', async () => {
+    proc.handler = () => ({ stdout: 'not json' });
+    await expect(y.searchVideos('x')).rejects.toThrow(/unreadable/);
+    proc.handler = () => new Error('Command failed: yt-dlp --proxy http://u:pw@h:1');
+    await expect(y.searchVideos('x')).rejects.toThrow('http://***@h:1');
   });
 });
 
