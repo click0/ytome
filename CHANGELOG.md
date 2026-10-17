@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+### Changed
+- Залежності: dotenv 18 (`config({ quiet: true })` і далі нічого не пише в stdout —
+  перевірено smoke-тестом), googleapis 183, @anthropic-ai/sdk 0.133, express 5.3,
+  pino 10.4, pino-pretty 13.2, zod 4.6.7
+
 ## [0.97.0] - 2026-10-17
 
 ### Added
