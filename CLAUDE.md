@@ -54,7 +54,7 @@ applied lazily by `ensureSummarySchema()`).
 ## Testing
 
 ```bash
-npm test               # vitest run (365 tests)
+npm test               # vitest run: the whole suite
 npm run test:watch
 npm run test:coverage  # + coverage report; thresholds in vitest.config.mts (CI fails below them)
 npm run smoke          # build + smoke test of both MCP transports
