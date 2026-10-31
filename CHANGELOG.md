@@ -5,9 +5,11 @@
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-10-31
+
 ### Changed
 - Залежності: dotenv 18 (`config({ quiet: true })` і далі нічого не пише в stdout —
-  перевірено smoke-тестом), googleapis 183, @anthropic-ai/sdk 0.133, express 5.3,
+  перевірено smoke-тестом), googleapis 187, @anthropic-ai/sdk 0.137, express 5.3,
   pino 10.4, pino-pretty 13.2, zod 4.6.7
 
 ## [0.97.0] - 2026-10-17
@@ -143,7 +145,8 @@
 
 - Перший публічний реліз
 
-[Unreleased]: https://github.com/click0/ytome/compare/v0.97...HEAD
+[Unreleased]: https://github.com/click0/ytome/compare/v0.98...HEAD
+[0.98.0]: https://github.com/click0/ytome/compare/v0.97...v0.98
 [0.97.0]: https://github.com/click0/ytome/compare/v0.95...v0.97
 [0.95.0]: https://github.com/click0/ytome/compare/v0.90...v0.95
 [0.90.0]: https://github.com/click0/ytome/compare/v0.85...v0.90
