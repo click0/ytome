@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Changed
+- Залежності: @anthropic-ai/sdk 1.3 (перша мажорна; надсилає `anthropic-version: 2026-10-21`
+  і ключ як `Authorization: Bearer` — ytome не передає `temperature`/`top_p`/`top_k`, документів
+  у відповідях асистента й `citations` у повідомленнях користувача, тож запити не змінюються;
+  ліцензія SDK тепер Apache 2.0), googleapis 188, @modelcontextprotocol/sdk 1.32.2, axios 1.21,
+  dotenv 18.0.9; FreeBSD у CI — cross-platform-actions/action 1.7
+
 ## [0.98.0] - 2026-10-31
 
 ### Changed
