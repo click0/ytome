@@ -6,12 +6,17 @@
  */
 
 import { z } from 'zod';
+import { extractVideoId } from '../youtube/ids';
 
 // =============================================
 // Helpers
 // =============================================
 
-const videoIdOrUrl = z.string().min(1, 'video_id is required');
+const videoIdOrUrl = z.string().min(1, 'video_id is required').max(500)
+  .refine(v => extractVideoId(v) !== null, 'video_id must be an 11-character YouTube video ID or a video URL');
+/** ISO 639-1/2 з необов'язковим регіоном — потрапляє в імена файлів і в регулярні вирази yt-dlp */
+const languageCode = z.string().regex(/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/, 'language: ISO code like uk, en, pt-BR')
+  .refine(v => v !== 'all', 'language: ISO code like uk, en, pt-BR ("all" would request every translated track)');
 const channelIdOrHandle = z.string().min(1, 'channel is required');
 const visibility = z.enum(['private', 'public']).default('private');
 const visibilityFilter = z.enum(['all', 'private', 'public']).default('all');
@@ -46,7 +51,7 @@ export const getFeedSchema = z.object({
 });
 
 export const markSeenSchema = z.object({
-  video_id: z.string().min(1, 'video_id is required'),
+  video_id: videoIdOrUrl,
 });
 
 // =============================================
@@ -55,13 +60,13 @@ export const markSeenSchema = z.object({
 
 export const getTranscriptSchema = z.object({
   video_id:      videoIdOrUrl,
-  language:      z.string().optional(),
+  language:      languageCode.optional(),
   force_refresh: z.boolean().default(false).optional(),
 });
 
 export const exportTranscriptSchema = z.object({
   video_id:      videoIdOrUrl,
-  language:      z.string().optional(),
+  language:      languageCode.optional(),
   timestamps:    z.boolean().optional(),
   force_refresh: z.boolean().optional(),
 });
@@ -153,8 +158,8 @@ export const importOpmlSchema = z.object({
 // =============================================
 
 export const cacheStatusSchema = z.object({
-  video_id:  z.string().optional(),
-  video_ids: z.array(z.string()).optional(),
+  video_id:  videoIdOrUrl.optional(),
+  video_ids: z.array(videoIdOrUrl).max(200, 'at most 200 video_ids').optional(),
 });
 
 // =============================================
@@ -178,11 +183,11 @@ export const aiStatusSchema = z.object({
 // =============================================
 
 export const evaluateVideoSchema = z.object({
-  video_id: z.string().min(1, 'video_id is required'),
+  video_id: videoIdOrUrl,
 });
 
 export const evaluateBatchSchema = z.object({
-  video_ids: z.array(z.string().min(1)).min(1, 'video_ids must contain at least 1 ID'),
+  video_ids: z.array(videoIdOrUrl).min(1, 'video_ids must contain at least 1 ID').max(50, 'at most 50 video_ids per batch'),
 });
 
 // =============================================
@@ -193,7 +198,7 @@ export const downloadSchema = z.object({
   video_id:  videoIdOrUrl,
   format:    z.enum(['audio', 'video', 'video_hd']).optional().default('audio'),
   subtitles: z.boolean().optional().default(false),
-  lang:      z.string().optional().default('en'),
+  lang:      languageCode.optional().default('en'),
 });
 
 // =============================================
@@ -285,7 +290,7 @@ export const driveBackupSchema = z.object({
 });
 
 export const driveExportTranscriptSchema = z.object({
-  video_id:  z.string().min(1, 'video_id is required'),
+  video_id:  videoIdOrUrl,
   folder_id: z.string().optional(),
 });
 
@@ -364,7 +369,6 @@ export const libraryRebuildSchema = z.object({
 // AI-підсумки транскриптів
 // =============================================
 
-const languageCode = z.string().regex(/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/, 'language: ISO code like uk, en, pt-BR');
 
 export const summarizeVideoSchema = z.object({
   video_id: videoIdOrUrl,

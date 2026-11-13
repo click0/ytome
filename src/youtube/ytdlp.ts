@@ -5,6 +5,7 @@ import fs from 'fs';
 import { getNextProxy, getProxyMode } from '../proxy/manager';
 import { createLogger } from '../logger';
 import { redactCredentials, safeErrorMessage } from '../redact';
+import { assertVideoId, isVideoId } from './ids';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('ytdlp');
@@ -110,7 +111,7 @@ function buildArgs(videoId: string, opts: DownloadOptions, version?: string): st
   const outTemplate = path.join(outDir, '%(id)s.%(ext)s');
 
   const args: string[] = [
-    `https://www.youtube.com/watch?v=${videoId}`,
+    `https://www.youtube.com/watch?v=${assertVideoId(videoId)}`,
     ...BASE_ARGS,
     '--no-playlist',
     '--output', outTemplate,
@@ -136,10 +137,10 @@ function buildArgs(videoId: string, opts: DownloadOptions, version?: string): st
 
   // Субтитри
   if (opts.subtitles) {
-    const lang = opts.lang || 'en';
+    const lang = safeLang(opts.lang);
     args.push(
-      '--write-auto-sub',
-      '--sub-lang', `${lang},${lang}-*`,
+      '--write-subs', '--write-auto-subs',          // ручні мають перевагу над автоматичними
+      '--sub-langs', subLangPattern(lang),
       '--sub-format', 'vtt',
       '--convert-subs', 'srt',
     );
@@ -165,6 +166,16 @@ function ytdlpEnv(): NodeJS.ProcessEnv {
     HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy,
     NO_PROXY: '', no_proxy: '',
   };
+}
+
+/** Код мови для yt-dlp: лише ISO (ще й іде в ім'я файлу й у регулярний вираз --sub-langs) */
+function safeLang(lang?: string): string {
+  return lang && lang !== 'all' && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(lang) ? lang : 'en';
+}
+
+/** --sub-langs — регулярні вирази на всю назву: "uk" і регіональні варіанти "uk-…" */
+function subLangPattern(lang: string): string {
+  return `${lang},${lang}-.*`;
 }
 
 /** Спільні аргументи: чужий конфіг yt-dlp (--download-archive тощо) не впливає на ytome */
@@ -263,9 +274,10 @@ export async function downloadVideo(
 
 export async function downloadSubtitles(
   videoId: string,
-  lang = 'en',
+  requestedLang = 'en',
   cookiePath?: string
 ): Promise<string | null> {
+  const lang = safeLang(requestedLang);
   const check = await checkYtDlp();
   if (!check.available) return null;
 
@@ -275,12 +287,12 @@ export async function downloadSubtitles(
   const outTemplate = path.join(outDir, `%(id)s.%(ext)s`);
 
   const args = [
-    `https://www.youtube.com/watch?v=${videoId}`,
+    `https://www.youtube.com/watch?v=${assertVideoId(videoId)}`,
     ...BASE_ARGS,
     '--no-playlist',
     '--skip-download',
-    '--write-auto-sub',
-    '--sub-lang', `${lang},${lang}-*,en`,
+    '--write-subs', '--write-auto-subs',
+    '--sub-langs', `${subLangPattern(lang)},en`,
     '--sub-format', 'vtt',
     '--convert-subs', 'srt',
     '--output', outTemplate,
@@ -299,13 +311,13 @@ export async function downloadSubtitles(
   try {
     await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, env });
 
-    // Шукаємо завантажений .srt файл
-    const srtPath = path.join(outDir, `${videoId}.${lang}.srt`);
-    const enPath  = path.join(outDir, `${videoId}.en.srt`);
-    const anyPath = [srtPath, enPath].find(p => fs.existsSync(p));
-
-    if (!anyPath) return null;
-    return fs.readFileSync(anyPath, 'utf-8');
+    // Завантажений .srt: потрібна мова → її регіональний варіант (pt-BR) → англійська
+    const files = fs.readdirSync(outDir).filter(f => f.startsWith(`${videoId}.`) && f.endsWith('.srt'));
+    const pick = (l: string) => files.find(f => f === `${videoId}.${l}.srt`)
+      ?? files.find(f => f.startsWith(`${videoId}.${l}-`));
+    const found = pick(lang) ?? pick('en');
+    if (!found) return null;
+    return fs.readFileSync(path.join(outDir, found), 'utf-8');
   } catch (e: any) {
     log.error({ videoId, error: safeErrorMessage(e) }, 'subtitle download failed');
     return null;
@@ -361,7 +373,7 @@ export async function searchVideos(query: string, opts: { limit?: number } = {})
     throw new Error('yt-dlp returned unreadable search results');
   }
   return (data.entries || [])
-    .filter((e: any) => e?.id && (e.ie_key === undefined || e.ie_key === 'Youtube'))
+    .filter((e: any) => typeof e?.id === 'string' && isVideoId(e.id) && (e.ie_key === undefined || e.ie_key === 'Youtube'))
     .map((e: any): SearchResult => ({
       youtube_id: e.id,
       title: e.title || 'Untitled',
@@ -392,7 +404,7 @@ export async function downloadAudioForTranscription(
   }
 
   const args = [
-    `https://www.youtube.com/watch?v=${videoId}`,
+    `https://www.youtube.com/watch?v=${assertVideoId(videoId)}`,
     ...BASE_ARGS,
     '--no-playlist',
     '-f', 'bestaudio/best',

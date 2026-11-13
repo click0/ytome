@@ -206,7 +206,14 @@ Title: ${input.title}
 Description: ${(input.description || '').slice(0, 300)}`,
     maxTokens: 80,
   });
-  return result?.score ?? 10;
+  return clampScore(result?.score, 20, 10);
+}
+
+/** Оцінка від моделі: число в межах 0..max, інакше запасне значення ("20" чи 9999 не проходять як є) */
+function clampScore(value: unknown, max: number, fallback: number): number {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(max, Math.round(n)));
 }
 
 /**
@@ -237,7 +244,7 @@ Title: ${input.title}
 Published: ${input.published_at}`,
       maxTokens: 40,
     });
-    return result?.score ?? baseScore;
+    return clampScore(result?.score, 20, baseScore);
   }
   return baseScore;
 }
@@ -252,6 +259,7 @@ Published: ${input.published_at}`,
  */
 async function generateAISummary(input: VideoEvalInput): Promise<string | undefined> {
   // TODO: підключити транскрипцію якщо є в кеші
+  // Без AI оцінка все одно має сенс — підсумок просто відсутній
   const result = await ask({
     complexity: 'medium',
     tag: 'summary',
@@ -259,8 +267,8 @@ async function generateAISummary(input: VideoEvalInput): Promise<string | undefi
     prompt: `Title: ${input.title}
 Description: ${(input.description || '').slice(0, 500)}`,
     maxTokens: 120,
-  });
-  return result.text.trim() || undefined;
+  }).catch(() => null);
+  return result?.text.trim() || undefined;
 }
 
 /**
@@ -371,8 +379,15 @@ export async function evaluateVideo(input: VideoEvalInput): Promise<EvalResult> 
  * Пакетна оцінка кількох відео з сортуванням по скору
  */
 export async function evaluateBatch(
-  inputs: VideoEvalInput[]
+  inputs: VideoEvalInput[],
+  concurrency = 3,
 ): Promise<EvalResult[]> {
-  const results = await Promise.all(inputs.map(evaluateVideo));
+  // Кожне відео — кілька AI-запитів: невеликими порціями, а не всі разом;
+  // збій одного відео не скасовує оцінку решти
+  const results: EvalResult[] = [];
+  for (let i = 0; i < inputs.length; i += concurrency) {
+    const settled = await Promise.allSettled(inputs.slice(i, i + concurrency).map(evaluateVideo));
+    for (const r of settled) if (r.status === 'fulfilled') results.push(r.value);
+  }
   return results.sort((a, b) => b.score.total - a.score.total);
 }

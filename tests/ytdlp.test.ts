@@ -86,14 +86,14 @@ describe('downloadVideo', () => {
     await y.downloadVideo('vid00000001', { format: 'video', outDir: out, subtitles: true, lang: 'uk', cookiePath: cookies });
     let args = downloadCall().args.join(' ');
     expect(args).toContain('-f bestvideo[height<=720]+bestaudio/best[height<=720] --merge-output-format mp4');
-    expect(args).toContain('--write-auto-sub --sub-lang uk,uk-* --sub-format vtt --convert-subs srt');
+    expect(args).toContain('--write-subs --write-auto-subs --sub-langs uk,uk-.* --sub-format vtt --convert-subs srt');
     expect(args).toContain(`--cookies ${cookies}`);
 
     proc.calls = [];
     await y.downloadVideo('vid00000001', { format: 'video_hd', outDir: out, subtitles: true, cookiePath: path.join(tmp, 'missing.txt') });
     args = downloadCall().args.join(' ');
     expect(args).toContain('-f bestvideo+bestaudio/best');
-    expect(args).toContain('--sub-lang en,en-*');
+    expect(args).toContain('--sub-langs en,en-.*');
     expect(args).not.toContain('--cookies'); // файлу немає
   });
 
@@ -148,7 +148,7 @@ describe('downloadSubtitles', () => {
     expect(await y.downloadSubtitles('vid00000001', 'ru', cookies)).toMatch(/Привет/);
     const args = downloadCall().args.join(' ');
     expect(args).toContain('--skip-download');
-    expect(args).toContain('--sub-lang ru,ru-*,en');
+    expect(args).toContain('--write-subs --write-auto-subs --sub-langs ru,ru-.*,en');
     expect(args).toContain(`--cookies ${cookies}`);
     expect(downloadCall().opts.timeout).toBe(60_000);
   });
@@ -260,6 +260,24 @@ describe('searchVideos', () => {
     await expect(y.searchVideos('x')).rejects.toThrow(/unreadable/);
     proc.handler = () => new Error('Command failed: yt-dlp --proxy http://u:pw@h:1');
     await expect(y.searchVideos('x')).rejects.toThrow('http://***@h:1');
+  });
+});
+
+describe('safety of yt-dlp inputs', () => {
+  it('refuses anything that is not a single video ID', async () => {
+    await expect(y.downloadVideo('&list=UUxyz123456')).rejects.toThrow(/Invalid YouTube video ID/);
+    await expect(y.downloadSubtitles('abc')).rejects.toThrow(/Invalid YouTube video ID/);
+    expect(proc.calls.filter(c => c.args[0] !== '--version')).toEqual([]);
+  });
+
+  it('picks a regional subtitle variant (pt-BR) and never passes a non-ISO language', async () => {
+    const dir = path.join(storage, 'transcripts', 'srt');
+    proc.handler = () => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'vid0000000b.pt-BR.srt'), 'Olá'); return {}; };
+    expect(await y.downloadSubtitles('vid0000000b', 'pt')).toBe('Olá');
+    proc.calls = [];
+    proc.handler = () => ({});
+    await y.downloadSubtitles('vid0000000c', '.*');
+    expect(downloadCall().args.join(' ')).toContain('--sub-langs en,en-.*,en');
   });
 });
 

@@ -143,15 +143,15 @@ describe('transcribeWithWhisper', () => {
 
   it('missing ffmpeg, API errors and silence are explained', async () => {
     m.ffmpeg = () => Object.assign(new Error('spawn ffmpeg ENOENT'), { code: 'ENOENT' });
-    await expect(w.transcribeWithWhisper('v', { provider: 'groq' })).rejects.toThrow(/ffmpeg не знайдено/);
+    await expect(w.transcribeWithWhisper('vid00000009', { provider: 'groq' })).rejects.toThrow(/ffmpeg не знайдено/);
 
     m.ffmpeg = () => null;
     m.post.mockRejectedValueOnce(Object.assign(new Error('Request failed'), {
       response: { status: 401, data: { error: { message: 'Invalid API Key' } } },
     }));
-    await expect(w.transcribeWithWhisper('v', { provider: 'groq' })).rejects.toThrow(/groq Whisper HTTP 401: Invalid API Key/);
+    await expect(w.transcribeWithWhisper('vid00000009', { provider: 'groq' })).rejects.toThrow(/groq Whisper HTTP 401: Invalid API Key/);
 
     m.post.mockResolvedValue({ data: { text: '', segments: [], duration: 600 } });
-    await expect(w.transcribeWithWhisper('v', { provider: 'groq' })).rejects.toThrow(/не розпізнав мовлення/);
+    await expect(w.transcribeWithWhisper('vid00000009', { provider: 'groq' })).rejects.toThrow(/не розпізнав мовлення/);
   });
 });

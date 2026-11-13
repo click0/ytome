@@ -18,13 +18,28 @@ export interface ParsedCookie {
   value: string;
 }
 
+/** cookies.txt браузера — кілобайти; більше — не той файл */
+const MAX_COOKIE_FILE_BYTES = 1024 * 1024;
+
+/**
+ * Прочитати cookies.txt: лише звичайний файл розумного розміру. Шлях приходить
+ * з інструмента — /dev/zero, FIFO чи /dev/stdin інакше вішали б сервер.
+ */
+function readCookieFile(filePath: string): string {
+  const st = fs.statSync(filePath);
+  if (!st.isFile()) throw new Error(`Not a regular file: ${filePath}`);
+  if (st.size > MAX_COOKIE_FILE_BYTES) throw new Error(`Cookie file is too large (${st.size} bytes): ${filePath}`);
+  return fs.readFileSync(filePath, 'utf-8');
+}
+
 /** Розпарсити cookies.txt у список cookie */
 export function parseCookiesFile(filePath: string): ParsedCookie[] {
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = readCookieFile(filePath);
   const cookies: ParsedCookie[] = [];
 
   for (const line of content.split('\n')) {
-    const trimmed = line.trim();
+    // "#HttpOnly_.youtube.com" — не коментар, а HttpOnly-cookie (SID-подібні сесійні)
+    const trimmed = line.trim().replace(/^#HttpOnly_/, '');
     if (!trimmed || trimmed.startsWith('#')) continue;
 
     const parts = trimmed.split('\t');

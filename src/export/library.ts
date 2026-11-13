@@ -44,6 +44,7 @@ export interface LibraryExportResult {
   unchanged: number;
   missing_source: number;
   skipped_audio_only: number;
+  removed_folders: number;  // rebuild: видалені теки шоу ytome
   errors: string[];
 }
 
@@ -107,20 +108,53 @@ export function linkFile(src: string, dst: string, mode: LinkMode = 'auto'): Lin
   return 'symlink';
 }
 
+/** Маркер теки шоу, яку створив ytome: rebuild видаляє лише такі теки */
+export const SHOW_MARKER = '.ytome-show';
+
+/** Справжній шлях: symlink-и розкриті навіть для ще не створеної частини шляху */
+function realPath(p: string): string {
+  const abs = path.resolve(p);
+  let existing = abs;
+  const rest: string[] = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    rest.unshift(path.basename(existing));
+    existing = parent;
+  }
+  try {
+    return path.join(fs.realpathSync.native(existing), ...rest);
+  } catch {
+    return abs;
+  }
+}
+
 /**
  * Захист від rebuild, що зніс би оригінали: бібліотека не може
- * містити теку медіа/БД і не може бути всередині неї.
+ * містити теку медіа/БД і не може бути всередині неї, не може бути коренем ФС.
+ * Шляхи порівнюються після розкриття symlink-ів, без урахування регістру там,
+ * де ФС його зазвичай не враховує (Windows, macOS).
  */
 export function assertSafeLibraryRoot(libraryPath: string): void {
-  const within = (child: string, parent: string) =>
-    child === parent || child.startsWith(parent + path.sep);
+  const fold = (p: string) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
+  const norm = (p: string) => fold(realPath(p));
+  const within = (child: string, parent: string) => {
+    const base = parent.endsWith(path.sep) ? parent : parent + path.sep;   // корінь "/" або "D:\"
+    return child === parent || child.startsWith(base);
+  };
 
-  const mediaDir = path.resolve(STORAGE_PATH, 'media');
+  const lib = norm(libraryPath);
+  if (path.parse(lib).root === lib) {
+    throw new Error(`Refusing to rebuild: MEDIA_LIBRARY_PATH (${libraryPath}) is a filesystem root`);
+  }
+
+  const mediaDir = norm(path.join(STORAGE_PATH, 'media'));
   const protectedPaths = [
-    path.resolve(STORAGE_PATH),
+    norm(STORAGE_PATH),
     mediaDir,
-    path.dirname(path.resolve(process.env.DB_PATH || './storage/archive.db')),
+    norm(path.dirname(path.resolve(process.env.DB_PATH || './storage/archive.db'))),
   ];
+  libraryPath = lib;
 
   // rm -rf бібліотеки не повинен зачепити жодну захищену теку
   const swallowed = protectedPaths.find(p => within(p, libraryPath));
@@ -150,6 +184,61 @@ function computeDayIndexes(channelDbId: number): Map<string, number> {
   return indexes;
 }
 
+/** Тека, якій можна довіряти: підкладений symlink замість неї прибирається */
+function ensureDir(dir: string): void {
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink()) fs.unlinkSync(dir);
+  } catch { /* ще не існує */ }
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+const O_NOFOLLOW = (fs.constants as Record<string, number>).O_NOFOLLOW ?? 0;
+
+/**
+ * Запис файлу без переходу за symlink: інакше підкладений у бібліотеку
+ * "<Шоу> - S… - <Назва>.nfo" → ~/.bashrc перезаписав би чужий файл.
+ */
+function writeFileNoFollow(file: string, data: string): void {
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) fs.unlinkSync(file);
+  } catch { /* ще не існує */ }
+  const fd = fs.openSync(file,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | O_NOFOLLOW, 0o644);
+  try {
+    fs.writeFileSync(fd, data);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Тека шоу ytome: є маркер-файл (не symlink) з ID каналу */
+function ownedBy(dir: string): string | null {
+  try {
+    const marker = path.join(dir, SHOW_MARKER);
+    if (!fs.lstatSync(dir).isDirectory() || !fs.lstatSync(marker).isFile()) return null;
+    return fs.readFileSync(marker, 'utf-8').trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ім'я теки шоу. Однакові назви каналів (чи однакові після очищення / без
+ * урахування регістру) не зливаються в одну теку — до них додається ID каналу.
+ */
+function showFolderNames(all: Array<{ youtube_id: string; name: string }>): Map<string, string> {
+  const count = new Map<string, number>();
+  for (const c of all) {
+    const k = sanitizeFilename(c.name).toLowerCase();
+    count.set(k, (count.get(k) || 0) + 1);
+  }
+  return new Map(all.map(c => {
+    const base = sanitizeFilename(c.name);
+    return [c.youtube_id, (count.get(base.toLowerCase()) || 0) > 1
+      ? sanitizeFilename(`${sanitizeFilename(c.name, 90)} [${c.youtube_id}]`) : base];
+  }));
+}
+
 async function ensureChannelPoster(channel: any, showDir: string, mode: LinkMode): Promise<void> {
   const poster = path.join(showDir, 'poster.jpg');
   if (fs.existsSync(poster)) return;
@@ -177,21 +266,34 @@ export async function exportLibrary(opts: {
     ? db.prepare('SELECT * FROM channels WHERE youtube_id = ?').all(opts.channelYoutubeId)
     : db.prepare('SELECT * FROM channels ORDER BY name').all()) as any[];
 
-  if (opts.rebuild) {
-    assertSafeLibraryRoot(libraryPath);
-    const targets = opts.channelYoutubeId
-      ? channels.map(c => path.join(libraryPath, sanitizeFilename(c.name)))
-      : [libraryPath];
-    for (const t of targets) fs.rmSync(t, { recursive: true, force: true });
-  }
-
+  const folderNames = showFolderNames(db.prepare('SELECT youtube_id, name FROM channels').all() as any[]);
   const mode = getLinkMode();
   const result: LibraryExportResult = {
     library_path: libraryPath,
     link_mode: mode,
     channels: 0, exported: 0, hardlinked: 0, cloned: 0, copied: 0, copied_bytes: 0,
-    symlinked: 0, unchanged: 0, missing_source: 0, skipped_audio_only: 0, errors: [],
+    symlinked: 0, unchanged: 0, missing_source: 0, skipped_audio_only: 0, removed_folders: 0, errors: [],
   };
+
+  if (opts.rebuild) {
+    // Лише теки шоу, які створив ytome (маркер) — чужі шоу в тій самій бібліотеці
+    // Jellyfin і будь-які інші файли лишаються недоторканими
+    assertSafeLibraryRoot(libraryPath);
+    const targets = opts.channelYoutubeId
+      ? channels.map(c => ({ dir: path.join(libraryPath, folderNames.get(c.youtube_id)!), id: c.youtube_id as string }))
+      : (fs.existsSync(libraryPath) ? fs.readdirSync(libraryPath) : [])
+        .map(name => ({ dir: path.join(libraryPath, name), id: null as string | null }));
+    for (const t of targets) {
+      if (!fs.existsSync(t.dir)) continue;
+      const owner = ownedBy(t.dir);
+      if (owner && (t.id === null || owner === t.id)) {
+        fs.rmSync(t.dir, { recursive: true, force: true });
+        result.removed_folders++;
+      } else if (t.id !== null) {
+        result.errors.push(`${t.dir}: not created by ytome (no ${SHOW_MARKER}) — left untouched`);
+      }
+    }
+  }
 
   const videosStmt = db.prepare(`
     SELECT youtube_id, title, description, published_at, duration_sec, tags,
@@ -206,7 +308,12 @@ export async function exportLibrary(opts: {
     if (videos.length === 0) continue;
 
     const nfoChannel: NfoChannel = channel;
-    const showDir = path.join(libraryPath, sanitizeFilename(channel.name));
+    const showDir = path.join(libraryPath, folderNames.get(channel.youtube_id) || sanitizeFilename(channel.name));
+    const owner = fs.existsSync(showDir) ? ownedBy(showDir) : null;
+    if (fs.existsSync(showDir) && owner !== null && owner !== channel.youtube_id) {
+      result.errors.push(`${showDir}: belongs to channel ${owner} — skipped`);
+      continue;
+    }
     const dayIndexes = computeDayIndexes(channel.id);
     let channelExported = 0;
 
@@ -217,8 +324,10 @@ export async function exportLibrary(opts: {
       if (!fs.existsSync(src)) { result.missing_source++; continue; }
 
       try {
+        ensureDir(showDir);
+        writeFileNoFollow(path.join(showDir, SHOW_MARKER), `${channel.youtube_id}\n`);
         const seasonDir = path.join(showDir, `Season ${seasonOf(v.published_at)}`);
-        fs.mkdirSync(seasonDir, { recursive: true });
+        ensureDir(seasonDir);
 
         const video: NfoVideo = { ...v, summary: getSummaryText(v.youtube_id) };
         const dayIndex = dayIndexes.get(v.youtube_id) || 1;
@@ -237,7 +346,7 @@ export async function exportLibrary(opts: {
         }
 
         // NFO перезаписуємо завжди — метадані могли оновитись
-        fs.writeFileSync(path.join(seasonDir, `${base}.nfo`), buildEpisodeNfo(nfoChannel, video, dayIndex));
+        writeFileNoFollow(path.join(seasonDir, `${base}.nfo`), buildEpisodeNfo(nfoChannel, video, dayIndex));
 
         if (v.thumbnail_path && fs.existsSync(v.thumbnail_path)) {
           linkFile(v.thumbnail_path, path.join(seasonDir, `${base}-thumb.jpg`), mode);
@@ -251,7 +360,7 @@ export async function exportLibrary(opts: {
     }
 
     if (channelExported > 0) {
-      fs.writeFileSync(path.join(showDir, 'tvshow.nfo'), buildShowNfo(nfoChannel));
+      writeFileNoFollow(path.join(showDir, 'tvshow.nfo'), buildShowNfo(nfoChannel));
       await ensureChannelPoster(channel, showDir, mode).catch(e =>
         result.errors.push(`${channel.youtube_id} poster: ${e.message}`)
       );

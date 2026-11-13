@@ -191,9 +191,8 @@ describe('transcripts', () => {
       .toBe('Alpha one\nAlpha\nhttps://youtube.com/watch?v=vidAlpha001\n\n[00:00] Hello world\n');
   });
 
-  it('export_transcript keeps the file inside the exports folder', async () => {
-    const r = await call('export_transcript', { video_id: 'vidAlpha001', language: '../../evil' });
-    expect(path.dirname(r.data.path)).toBe(path.resolve(storage, 'exports', 'transcripts'));
+  it('export_transcript refuses a language that is not an ISO code (file name stays inside exports)', async () => {
+    expect((await call('export_transcript', { video_id: 'vidAlpha001', language: '../../evil' })).error).toMatch(/ISO code/);
   });
 
   it('analyze_transcript returns the cached text with an instruction', async () => {
@@ -537,5 +536,35 @@ describe('search_videos', () => {
     expect((await call('search_videos', { query: '   ' })).error).toMatch(/query is required/);
     m.searchVideos.mockRejectedValueOnce(new Error('yt-dlp not found'));
     expect((await call('search_videos', { query: 'x' })).error).toMatch(/yt-dlp not found/);
+  });
+});
+
+describe('input validation', () => {
+  it('video_id must be a real 11-character ID or a video URL — no playlist smuggling', async () => {
+    for (const bad of ['&list=UUabcdefghijklmnopqrstuv', 'abc', 'vidAlpha001&list=UU1', '../../etc/passwd']) {
+      const r = await call('download', { video_id: bad });
+      expect(r.error).toMatch(/11-character YouTube video ID/);
+    }
+    expect(m.downloadVideo).not.toHaveBeenCalled();
+    for (const ok of ['https://www.youtube.com/watch?v=vidAlpha001&list=UU1', 'https://youtube.com/shorts/vidAlpha001',
+      'https://youtu.be/vidAlpha001?t=3']) {
+      m.downloadVideo.mockResolvedValueOnce({ filePath: '/m/x.mp3', format: 'audio', fileSize: 1 });
+      expect((await call('download', { video_id: ok })).data.video_id).toBe('vidAlpha001');
+    }
+  });
+
+  it('language codes are ISO only (they reach file names and yt-dlp patterns)', async () => {
+    for (const tool of ['get_transcript', 'export_transcript']) {
+      expect((await call(tool, { video_id: 'vidAlpha001', language: 'en/../../x' })).error).toMatch(/ISO code/);
+      expect((await call(tool, { video_id: 'vidAlpha001', language: '.*' })).error).toMatch(/ISO code/);
+    }
+    expect((await call('download', { video_id: 'vidAlpha001', lang: 'all' })).error).toMatch(/ISO code/);
+  });
+
+  it('evaluate_batch is capped and de-duplicated', async () => {
+    const many = Array.from({ length: 51 }, () => 'vidAlpha001');
+    expect((await call('evaluate_batch', { video_ids: many })).error).toMatch(/at most 50/);
+    const r = await call('evaluate_batch', { video_ids: ['vidAlpha001', 'https://youtu.be/vidAlpha001', 'vidAlpha001'] });
+    expect(r.data.total).toBe(1);
   });
 });

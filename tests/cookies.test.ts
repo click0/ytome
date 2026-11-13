@@ -110,3 +110,21 @@ describe('validateCookiesFile', () => {
     expect(result.error).toContain('youtube');
   });
 });
+
+describe('cookie file safety and HttpOnly cookies', () => {
+  it('refuses devices, directories and huge files instead of hanging', () => {
+    expect(validateCookiesFile(TMP_DIR).valid).toBe(false);
+    if (process.platform !== 'win32') {
+      expect(validateCookiesFile('/dev/zero')).toMatchObject({ valid: false, error: expect.stringMatching(/regular file/) });
+    }
+    const big = path.join(TMP_DIR, 'big.txt');
+    fs.writeFileSync(big, Buffer.alloc(2 * 1024 * 1024, 'a'));
+    expect(validateCookiesFile(big)).toMatchObject({ valid: false, error: expect.stringMatching(/too large/) });
+  });
+
+  it('#HttpOnly_ lines are cookies, not comments', () => {
+    const p = path.join(TMP_DIR, 'httponly.txt');
+    fs.writeFileSync(p, `# Netscape HTTP Cookie File\n#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t${FUTURE}\tHSID\th1\n.youtube.com\tTRUE\t/\tTRUE\t${FUTURE}\tSID\ts1\n`);
+    expect(buildCookieHeader(p)).toBe('HSID=h1; SID=s1');
+  });
+});

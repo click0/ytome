@@ -5,6 +5,7 @@ import { createLogger } from '../logger';
 import { validateArgs } from './validation';
 import { getDb } from '../db/init';
 import { redactCredentials, safeErrorMessage } from '../redact';
+import { extractVideoId as parseVideoId } from '../youtube/ids';
 
 const log = createLogger('mcp');
 
@@ -785,10 +786,11 @@ function parseSince(since?: string): string {
   return new Date(since).toISOString();
 }
 
+/** ID відео з уже перевіреного Zod-схемою значення (ID або URL) */
 function extractVideoId(input: string): string {
-  // Извлечь video ID из URL или вернуть как есть
-  const urlMatch = input.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-  return urlMatch ? urlMatch[1] : input;
+  const id = parseVideoId(input);
+  if (!id) throw new Error(`Invalid YouTube video ID or URL: ${JSON.stringify(input.slice(0, 40))}`);
+  return id;
 }
 
 /** Канал з архіву за ID або @handle */
@@ -1332,7 +1334,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
 
     case 'evaluate_batch': {
       const db3 = getDb();
-      const ids = (args.video_ids as string[]).map(extractVideoId);
+      const ids = [...new Set((args.video_ids as string[]).map(extractVideoId))];
       const rows = ids.map((id: string) => db3.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(id)).filter(Boolean) as any[];
       if (rows.length === 0) return err('No matching videos found in archive');
       const inputs = rows.map((v: any) => ({

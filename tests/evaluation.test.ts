@@ -135,3 +135,26 @@ describe('evaluateBatch', () => {
     expect(res[0].score.total).toBeGreaterThan(res[1].score.total);
   });
 });
+
+describe('model scores are validated', () => {
+  it('string, huge or garbage scores do not inflate the total', async () => {
+    ai.json = { relevance: { score: '20' } };
+    const s1 = await evaluateVideo({ youtube_id: 'v', title: 'x', published_at: daysAgo(1), has_captions: true });
+    expect(s1.score.relevance).toBe(20);
+    expect(typeof s1.score.total).toBe('number');
+    ai.json = { relevance: { score: 9999 } };
+    expect((await evaluateVideo({ youtube_id: 'v', title: 'x', published_at: daysAgo(1), has_captions: true })).score.relevance).toBe(20);
+    ai.json = { relevance: { score: 'lots' } };
+    expect((await evaluateVideo({ youtube_id: 'v', title: 'x', published_at: daysAgo(1), has_captions: true })).score.relevance).toBe(10);
+  });
+
+  it('a failing video does not cancel the batch; AI summary failure does not fail evaluation', async () => {
+    ai.ask.mockRejectedValue(new Error('No available AI providers'));
+    const r = await evaluateBatch([
+      { youtube_id: 'a', title: 'A', published_at: daysAgo(1), has_captions: true },
+      { youtube_id: 'b', title: 'B', published_at: 'not a date', has_captions: true },
+    ]);
+    expect(r.map(x => x.video_id)).toContain('a');
+    expect(r.find(x => x.video_id === 'a')!.ai_summary).toBeUndefined();
+  });
+});
