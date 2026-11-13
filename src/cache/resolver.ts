@@ -85,6 +85,14 @@ export interface TranscriptData {
   cached_at: string;
 }
 
+/** Кешований транскрипт підходить для запиту мовою lang ("uk" підходить і для "uk-UA") */
+export function transcriptMatchesLanguage(cachedLang: string, lang?: string): boolean {
+  if (!lang) return true;
+  const c = cachedLang.toLowerCase();
+  const l = lang.toLowerCase();
+  return c === l || c.startsWith(`${l}-`) || l.startsWith(`${c}-`);
+}
+
 export function getTranscriptCached(youtubeId: string, lang?: string): CacheResult<TranscriptData> {
   const db = getDb();
 

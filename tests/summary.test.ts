@@ -304,3 +304,55 @@ describe('formatting and .nfo', () => {
     expect(plain).not.toContain('<plot>');
   });
 });
+
+describe('hardening', () => {
+  it('chunking splits an over-long segment and skips blank ones', () => {
+    const long = { start: 0, dur: 600, text: Array.from({ length: 800 }, (_, i) => `word${i}`).join(' ') };
+    const chunks = sz.chunkTranscript({ text: '', segments: [long, { start: 700, dur: 1, text: '   ' }] }, 1000);
+    expect(chunks.length).toBeGreaterThan(3);
+    expect(chunks.every(c => c.text.length <= 1000)).toBe(true);
+    expect(chunks.map(c => c.text).join(' ')).toContain('word799');
+    expect(sz.chunkTranscript({ text: '', segments: [{ start: 0, dur: 1, text: ' ' }] }, 1000)).toEqual([]);
+  });
+
+  it('JSON replies with text after the object (even containing "}") still parse', () => {
+    expect(sz.parseJsonReply('{"tldr": "a {b}"} Hope this helps! }')).toEqual({ tldr: 'a {b}' });
+    expect(sz.parseJsonReply('Here: {not json} and {"x": 1}')).toEqual({ x: 1 });
+  });
+
+  it('digest escapes Markdown from titles and AI text — no link or image injection', async () => {
+    const db = init.getDb();
+    const ch = (db.prepare("SELECT id FROM channels WHERE youtube_id = 'UCmanual'").get() as any).id;
+    seedVideo(db, ch, { youtube_id: 'evilVideo01', title: 'Evil](https://phish.example) ![t](https://track.example/p.png)', published_at: ago(0.1), duration_sec: 600 });
+    const d = sm.buildDigest({ since: ago(1), channelYoutubeId: 'UCmanual' });
+    expect(d.markdown).toContain('### [Evil\\]\\(https://phish.example\\) \\!\\[t\\]\\(https://track.example/p.png\\)](https://youtube.com/watch?v=evilVideo01)');
+    expect(sm.md('line1\n# heading <img src=x>')).toBe('line1 \\# heading \\<img src=x\\>');
+  });
+
+  it('only one summary run at a time — a concurrent run reports it and does no work', async () => {
+    const { tryAcquireLease, releaseLease } = await import('../src/db/lease');
+    const token = tryAcquireLease('summary-queue', 60)!;
+    expect(token).toBeTruthy();
+    expect(tryAcquireLease('summary-queue', 60)).toBeNull();
+    expect(await sm.processSummaryQueue()).toMatchObject({ processed: 0, stopped: 'another summary run is in progress' });
+    releaseLease('summary-queue', token);
+    // спливла оренда (збій процесу) звільняється сама
+    expect(tryAcquireLease('summary-queue', -1)).toBeTruthy();
+    expect(tryAcquireLease('summary-queue', 60)).toBeTruthy();
+    init.getDb().exec("DELETE FROM settings WHERE key = 'lease:summary-queue'");
+  });
+
+  it('an AI outage does not burn the video\'s attempts', async () => {
+    const db = init.getDb();
+    const ch = (db.prepare("SELECT id FROM channels WHERE youtube_id = 'UCauto'").get() as any).id;
+    const vid = seedVideo(db, ch, { youtube_id: 'aiDown00001', title: 'AI down', published_at: ago(0.05), duration_sec: 600 });
+    process.env.SUMMARY_DAILY_LIMIT = '100';
+    m.fetchTranscriptOfflineFirst.mockResolvedValue(longTranscript(1));
+    m.ask.mockRejectedValue(new Error('No available AI providers [complexity=medium, mode=cost]'));
+    for (let i = 0; i < 3; i++) {
+      db.prepare("UPDATE summaries SET next_attempt_at = datetime('now', '-1 minute') WHERE status = 'retry'").run();
+      await sm.processSummaryQueue({ limit: 1 });
+    }
+    expect(db.prepare('SELECT status, attempts FROM summaries WHERE video_id = ?').get(vid)).toEqual({ status: 'retry', attempts: 0 });
+  });
+});

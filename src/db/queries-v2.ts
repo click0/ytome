@@ -1,5 +1,10 @@
 import { getDb } from './init';
 
+/** Буквальний пошук у LIKE: екранує %, _ і зворотну скісну риску */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, '\\$&');
+}
+
 // =============================================
 // WATCH LATER
 // =============================================
@@ -68,7 +73,8 @@ export function getWatchLater(options: {
   if (status !== 'all') { where += ' AND wl.status = ?'; params.push(status); }
   if (options.priority) { where += ' AND wl.priority = ?'; params.push(options.priority); }
   if (options.overdue) { where += " AND wl.remind_at IS NOT NULL AND datetime(wl.remind_at) < datetime('now')"; }
-  if (options.tag) { where += ` AND wl.tags LIKE ?`; params.push(`%"${options.tag}"%`); }
+  // Тег шукаємо як JSON-рядок у масиві; % і _ у тегу — буквально
+  if (options.tag) { where += " AND wl.tags LIKE ? ESCAPE '\\'"; params.push(`%${escapeLike(JSON.stringify(options.tag))}%`); }
 
   const rows = db.prepare(`
     SELECT wl.id, wl.priority, wl.remind_at, wl.note, wl.tags,
@@ -90,20 +96,24 @@ export function getWatchLater(options: {
   }));
 }
 
-export function updateWatchLaterStatus(id: number, status: 'done' | 'skipped' | 'pending'): void {
-  getDb().prepare(`
+export function updateWatchLaterStatus(id: number, status: 'done' | 'skipped' | 'pending'): boolean {
+  return getDb().prepare(`
     UPDATE watch_later SET status = ?,
       done_at = CASE WHEN ? IN ('done','skipped') THEN CURRENT_TIMESTAMP ELSE NULL END
     WHERE id = ?
-  `).run(status, status, id);
+  `).run(status, status, id).changes > 0;
 }
 
-export function updateWatchLaterPriority(id: number, priority: 'high' | 'medium' | 'low'): void {
-  getDb().prepare('UPDATE watch_later SET priority = ? WHERE id = ?').run(priority, id);
+export function updateWatchLaterPriority(id: number, priority: 'high' | 'medium' | 'low'): boolean {
+  return getDb().prepare('UPDATE watch_later SET priority = ? WHERE id = ?').run(priority, id).changes > 0;
 }
 
-export function updateWatchLaterNote(id: number, note: string): void {
-  getDb().prepare('UPDATE watch_later SET note = ? WHERE id = ?').run(note, id);
+export function updateWatchLaterNote(id: number, note: string): boolean {
+  return getDb().prepare('UPDATE watch_later SET note = ? WHERE id = ?').run(note, id).changes > 0;
+}
+
+export function watchLaterExists(id: number): boolean {
+  return !!getDb().prepare('SELECT 1 FROM watch_later WHERE id = ?').get(id);
 }
 
 export function getWatchLaterStats() {
@@ -187,10 +197,12 @@ export function getCachedComments(videoYoutubeId: string, options: {
 
   if (withReplies && result.length > 0) {
     const parentIds = result.map(r => r.youtube_comment_id);
+    // До 5 найпопулярніших відповідей на КОЖЕН коментар (а не 5 на всі разом)
     const replies = db.prepare(`
-      SELECT * FROM comments
-      WHERE parent_id IN (${parentIds.map(() => '?').join(',')})
-      ORDER BY like_count DESC LIMIT 5
+      SELECT * FROM (
+        SELECT c.*, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY like_count DESC) AS rn
+        FROM comments c WHERE parent_id IN (${parentIds.map(() => '?').join(',')})
+      ) WHERE rn <= 5 ORDER BY like_count DESC
     `).all(...parentIds) as any[];
 
     const repliesMap = new Map<string, CommentRow[]>();

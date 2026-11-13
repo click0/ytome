@@ -76,6 +76,19 @@ export function loadProviderConfigs(): Record<ProviderName, ProviderConfig> {
   };
 }
 
+/** localhost, 127.x, ::1, приватні мережі — без проксі */
+export function isLocalUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host.endsWith('.local') || host === '::1'
+    || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^f[cd][0-9a-f]{2}:/.test(host);
+}
+
 // =============================================
 // Виклик провайдера
 // =============================================
@@ -122,10 +135,14 @@ export async function askProvider(req: ProviderRequest): Promise<ProviderRespons
         ...(req.json ? { response_format: { type: 'json_object' } } : {}),
       };
 
+  // Локальні моделі (Ollama, LM Studio) — напряму: проксі YouTube до localhost
+  // не дістанеться, а промпти з транскриптами нема чого слати через чужий вузол
+  const local = isLocalUrl(config.baseUrl);
   const resp = await axios.post(url, body, {
     headers,
-    timeout: 30_000,
-    ...(await axiosProxyConfig()),
+    timeout: 120_000,
+    signal: AbortSignal.timeout(150_000),
+    ...(local ? {} : await axiosProxyConfig()),
   });
 
   const latency_ms = Date.now() - start;

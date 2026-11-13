@@ -13,6 +13,7 @@ const axiosRequest = vi.fn();
 vi.mock('axios', () => ({ default: { request: (...a: any[]) => axiosRequest(...a), get: vi.fn() } }));
 vi.mock('../src/proxy/manager', () => ({
   getNextProxy: () => null,
+  selectProxy: () => null,
   buildAgent: async () => undefined,
   axiosProxyConfig: async () => ({}),
   googleApiProxyConfig: async () => ({}),
@@ -74,6 +75,11 @@ describe('classifyTranscriptFailure', () => {
       libErr('YoutubeTranscriptNotAvailableLanguageError', 'No transcripts in uk. Available: ru, en'), {});
     expect(e.reason).toBe('language');
     expect(e.message).toMatch(/ru, en/);
+  });
+
+  it('a 5xx or a network failure while fetching captions is retryable, not "no captions"', () => {
+    expect(classifyTranscriptFailure('v', libErr('X'), { playability: { status: 'OK' }, transcriptStatus: 503 }).reason).toBe('error');
+    expect(classifyTranscriptFailure('v', new Error('timeout of 30000ms exceeded'), { playability: { status: 'OK' } }).reason).toBe('error');
   });
 
   it('anything else → error with the original message', () => {

@@ -8,6 +8,9 @@ import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { parseSqliteTime } from '../db/time';
+import { safeErrorMessage } from '../redact';
+import { ensureSchema } from '../db/schema';
+import { withLease } from '../db/lease';
 import { processSummaryQueue } from '../summary/index';
 import { createLogger } from '../logger';
 
@@ -40,7 +43,11 @@ async function detectNewVideos(
     try {
       entries = await fetchChannelFeed(channel.youtube_id);
     } catch (e: any) {
-      log.warn({ channel: channel.name, error: e.message }, 'RSS failed — falling back to search.list');
+      // 404 — канал видалено чи заблоковано: search.list (100 од.) щоразу тут не допоможе
+      if (e?.response?.status === 404) {
+        throw new Error('channel feed returned 404 — the channel may be deleted or terminated');
+      }
+      log.warn({ channel: channel.name, error: safeErrorMessage(e) }, 'RSS failed — falling back to search.list');
     }
     if (entries) {
       const known = getKnownVideoIds(entries.map(e => e.video_id));
@@ -108,8 +115,9 @@ export async function checkChannel(channel: any): Promise<number> {
 
   } catch (err: any) {
     const isQuota = err?.message?.includes('quota');
-    logCheck(channel.id, 0, isQuota ? 'quota_exceeded' : 'error', err.message);
-    log.error({ channel: channel.name, error: err.message }, 'channel check failed');
+    const message = safeErrorMessage(err);
+    logCheck(channel.id, 0, isQuota ? 'quota_exceeded' : 'error', message);
+    log.error({ channel: channel.name, error: message }, 'channel check failed');
     return 0;
   }
 }
@@ -119,6 +127,12 @@ export async function checkChannel(channel: any): Promise<number> {
 // =============================================
 
 export async function checkAllChannels(): Promise<void> {
+  // Один запуск одночасно — і в межах процесу, і між планувальником та MCP-сервером
+  const done = await withLease('channel-check', 2 * 3600, async () => { await checkAllChannelsLocked(); return true; });
+  if (done === null) log.info('another channel check is still running — skipped');
+}
+
+async function checkAllChannelsLocked(): Promise<void> {
   const quota = getQuotaStatus();
   if (quota.critical) {
     log.warn({ used: quota.used, limit: quota.limit }, 'quota critical — skipping scheduled check');
@@ -152,18 +166,19 @@ export async function checkAllChannels(): Promise<void> {
 // =============================================
 
 export function startScheduler(): void {
+  ensureSchema();
   log.info({ interval: CHECK_INTERVAL }, 'scheduler started');
 
   cron.schedule(CHECK_INTERVAL, async () => {
     log.info('running scheduled check');
     await checkAllChannels();
     await runAutoSummaries();
-  });
+  }, { noOverlap: true });
 
   // Первая проверка сразу при запуске
   checkAllChannels()
     .then(runAutoSummaries)
-    .catch(e => log.error({ error: e.message }, 'initial check failed'));
+    .catch(e => log.error({ error: safeErrorMessage(e) }, 'initial check failed'));
 }
 
 /**
@@ -175,7 +190,7 @@ export async function runAutoSummaries(): Promise<void> {
   try {
     await processSummaryQueue();
   } catch (e: any) {
-    log.error({ error: e.message }, 'summary queue failed');
+    log.error({ error: safeErrorMessage(e) }, 'summary queue failed');
   }
 }
 

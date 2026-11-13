@@ -106,7 +106,72 @@ describe('exportLibrary', () => {
   });
 });
 
+describe('library safety', () => {
+  it('full rebuild removes only ytome show folders — other shows in the library survive', async () => {
+    const foreign = path.join(LIBRARY, 'Breaking Bad', 'Season 1');
+    fs.mkdirSync(foreign, { recursive: true });
+    fs.writeFileSync(path.join(foreign, 'S01E01.mkv'), 'not ours');
+    fs.writeFileSync(path.join(LIBRARY, 'notes.txt'), 'not ours either');
+
+    const r = await lib.exportLibrary({ rebuild: true });
+    expect(r.removed_folders).toBe(1);
+    expect(fs.readFileSync(path.join(foreign, 'S01E01.mkv'), 'utf-8')).toBe('not ours');
+    expect(fs.existsSync(path.join(LIBRARY, 'notes.txt'))).toBe(true);
+    expect(fs.readFileSync(path.join(showDir, lib.SHOW_MARKER), 'utf-8').trim()).toBe('UCtest');
+  });
+
+  it('channel rebuild leaves a same-named folder without the marker untouched', async () => {
+    fs.rmSync(showDir, { recursive: true, force: true });
+    fs.mkdirSync(showDir, { recursive: true });
+    fs.writeFileSync(path.join(showDir, 'mine.mkv'), 'user file');
+    const r = await lib.exportLibrary({ rebuild: true, channelYoutubeId: 'UCtest' });
+    expect(r.errors).toEqual([expect.stringMatching(/not created by ytome/)]);
+    expect(fs.existsSync(path.join(showDir, 'mine.mkv'))).toBe(true);
+    // експорт додає маркер — наступний rebuild каналу вже працює
+    expect((await lib.exportLibrary({ rebuild: true, channelYoutubeId: 'UCtest' })).removed_folders).toBe(1);
+    expect(fs.existsSync(path.join(showDir, 'mine.mkv'))).toBe(false);
+  });
+
+  it('a symlink planted in place of an NFO is replaced, its target is not overwritten', async () => {
+    const victim = path.join(TMP, 'victim.txt');
+    fs.writeFileSync(victim, 'precious');
+    const nfo = path.join(seasonDir, 'Test Channel - S2026E031501 - First.nfo');
+    fs.rmSync(nfo, { force: true });
+    fs.symlinkSync(victim, nfo);
+    await lib.exportLibrary();
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('precious');
+    expect(fs.lstatSync(nfo).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(nfo, 'utf-8')).toContain('<episodedetails>');
+  });
+
+  it('a symlinked Season folder is replaced by a real one', async () => {
+    const elsewhere = fs.mkdtempSync(path.join(TMP, 'elsewhere-'));
+    fs.rmSync(seasonDir, { recursive: true, force: true });
+    fs.symlinkSync(elsewhere, seasonDir);
+    await lib.exportLibrary();
+    expect(fs.lstatSync(seasonDir).isSymbolicLink()).toBe(false);
+    expect(fs.readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it('filenames are limited in bytes, not characters (Cyrillic titles)', async () => {
+    const { episodeBaseName, sanitizeFilename } = await import('../src/export/nfo');
+    const base = episodeBaseName('Канал з дуже довгою назвою українською мовою',
+      { youtube_id: 'x', title: 'Дуже довга назва відео '.repeat(10), published_at: '2026-03-15T08:00:00Z' }, 1);
+    expect(Buffer.byteLength(base + '-thumb.jpg')).toBeLessThanOrEqual(255);
+    expect(sanitizeFilename('CON')).toBe('_CON');
+    expect(sanitizeFilename('..')).toBe('untitled');
+    expect(sanitizeFilename('😀'.repeat(100), 10)).toBe('😀😀');   // символ не розрізається
+  });
+});
+
 describe('assertSafeLibraryRoot', () => {
+  it('refuses a filesystem root and a symlink that resolves onto storage', () => {
+    expect(() => lib.assertSafeLibraryRoot(path.parse(TMP).root)).toThrow(/filesystem root|Refusing/);
+    const link = path.join(TMP, 'link-to-storage');
+    fs.symlinkSync(STORAGE, link);
+    expect(() => lib.assertSafeLibraryRoot(link)).toThrow(/Refusing to rebuild/);
+  });
+
   it('accepts a dedicated library folder', () => {
     expect(() => lib.assertSafeLibraryRoot(LIBRARY)).not.toThrow();
   });

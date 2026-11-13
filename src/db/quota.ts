@@ -137,7 +137,7 @@ export function assertQuota(operation: QuotaOperation, multiplier = 1): void {
     const status = getQuotaStatus();
     throw new Error(
       `YouTube API quota exceeded for today (${status.used}/${status.limit} units used). ` +
-      `Resets at midnight UTC. Operation "${operation}" requires ${QUOTA_COSTS[operation] * multiplier} units.`
+      `Resets at midnight Pacific time. Operation "${operation}" requires ${QUOTA_COSTS[operation] * multiplier} units.`
     );
   }
 }
@@ -192,6 +192,16 @@ export function getQuotaBreakdown(date?: string): Array<{
 // Утиліти
 // =============================================
 
+/**
+ * День квоти: YouTube скидає квоту опівночі за тихоокеанським часом (PT),
+ * а не UTC — інакше лічильник «скидався» на 7–8 год не тоді.
+ */
+export function quotaDay(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);   // YYYY-MM-DD
+}
+
 function utcDate(): string {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return quotaDay();
 }

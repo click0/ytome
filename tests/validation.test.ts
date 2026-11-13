@@ -54,13 +54,13 @@ describe('validateArgs', () => {
   // ── watch_later_add ────────────────────────────
   describe('watch_later_add', () => {
     it('accepts minimal input', () => {
-      const result = validateArgs('watch_later_add', { video_id: 'abc123' });
-      expect(result.video_id).toBe('abc123');
+      const result = validateArgs('watch_later_add', { video_id: 'abc123def45' });
+      expect(result.video_id).toBe('abc123def45');
     });
 
     it('accepts full input', () => {
       const result = validateArgs('watch_later_add', {
-        video_id: 'abc123',
+        video_id: 'abc123def45',
         priority: 'high',
         remind_at: '2026-04-01',
         note: 'important',
@@ -71,7 +71,7 @@ describe('validateArgs', () => {
     });
 
     it('rejects invalid priority', () => {
-      expect(() => validateArgs('watch_later_add', { video_id: 'x', priority: 'urgent' }))
+      expect(() => validateArgs('watch_later_add', { video_id: 'xxxxxxxxxxx', priority: 'urgent' }))
         .toThrow('Validation error');
     });
   });
@@ -99,7 +99,7 @@ describe('validateArgs', () => {
   describe('get_comments', () => {
     it('accepts valid input', () => {
       const result = validateArgs('get_comments', {
-        video_id: 'abc',
+        video_id: 'abc123def45',
         limit: 50,
         owner_only: true,
       });
@@ -107,12 +107,12 @@ describe('validateArgs', () => {
     });
 
     it('rejects limit > 100', () => {
-      expect(() => validateArgs('get_comments', { video_id: 'x', limit: 200 }))
+      expect(() => validateArgs('get_comments', { video_id: 'xxxxxxxxxxx', limit: 200 }))
         .toThrow('Validation error');
     });
 
     it('rejects limit < 1', () => {
-      expect(() => validateArgs('get_comments', { video_id: 'x', limit: 0 }))
+      expect(() => validateArgs('get_comments', { video_id: 'xxxxxxxxxxx', limit: 0 }))
         .toThrow('Validation error');
     });
   });
@@ -185,7 +185,7 @@ describe('validateArgs', () => {
     });
 
     it('accepts valid array', () => {
-      const result = validateArgs('evaluate_batch', { video_ids: ['a', 'b', 'c'] });
+      const result = validateArgs('evaluate_batch', { video_ids: ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc'] });
       expect(result.video_ids).toHaveLength(3);
     });
   });
@@ -193,12 +193,12 @@ describe('validateArgs', () => {
   // ── download ───────────────────────────────────
   describe('download', () => {
     it('defaults format to audio', () => {
-      const result = validateArgs('download', { video_id: 'xyz' });
+      const result = validateArgs('download', { video_id: 'xyz123def45' });
       expect(result.format).toBe('audio');
     });
 
     it('rejects invalid format', () => {
-      expect(() => validateArgs('download', { video_id: 'x', format: 'mp3' }))
+      expect(() => validateArgs('download', { video_id: 'xxxxxxxxxxx', format: 'mp3' }))
         .toThrow('Validation error');
     });
   });
@@ -223,4 +223,17 @@ describe('validateArgs', () => {
       expect(result).toEqual({ foo: 'bar' });
     });
   });
+
+  describe('video IDs', () => {
+    it('accepts IDs and video URLs, rejects anything that is not a single video', () => {
+      for (const ok of ['dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'https://youtu.be/dQw4w9WgXcQ?t=1',
+        'https://www.youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/live/dQw4w9WgXcQ']) {
+        expect(() => validateArgs('get_transcript', { video_id: ok })).not.toThrow();
+      }
+      for (const bad of ['&list=UUxyz', 'dQw4w9WgXcQ&list=UU1', 'dQw4w9WgXc', 'dQw4w9WgXcQQ', 'https://example.com/']) {
+        expect(() => validateArgs('get_transcript', { video_id: bad })).toThrow(/11-character/);
+      }
+    });
+  });
+
 });

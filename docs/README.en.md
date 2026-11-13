@@ -154,8 +154,6 @@ DB_PATH=/home/yourname/projects/ytome/storage/archive.db
 
 ```bash
 npm run build
-node dist/db/init.js
-node dist/db/migrate-002.js
 ```
 
 After successful execution, the file `storage/archive.db` will be created — this file contains your entire archive.
@@ -296,6 +294,13 @@ summaries and `evaluate_video`; in Claude Desktop / claude.ai, `analyze_transcri
 
 `ai_status` with `check_health: true` shows which providers answer.
 
+### Security
+
+- Tool arguments come from the model, which reads untrusted text (titles, descriptions, transcripts, comments). The tools refuse dangerous targets themselves: Drive uploads only to `GOOGLE_DRIVE_FOLDER_ID` / `GOOGLE_DRIVE_ALLOWED_FOLDERS`, Sheets exports only to sheets ytome created or `GOOGLE_SHEETS_ALLOWED_IDS`; video IDs must be single videos; language codes ISO only.
+- `drive_backup` uploads a snapshot **without** profile API keys and proxy credentials.
+- The HTTP server refuses to listen on the network (`MCP_HOST=0.0.0.0`) without `MCP_API_KEY`; send it as `Authorization: Bearer` or `x-api-key`.
+- Proxy passwords and API keys are redacted from tool replies and logs.
+
 ### Diagnostics
 
 `doctor` (MCP tool) or `npm run doctor [-- --network]` checks yt-dlp and its JavaScript runtime (YouTube needs one since
@@ -362,7 +367,7 @@ Requires `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` in `.env` (see `.env.example`).
 | Tool | Description |
 |------|-------------|
 | `library_export` | Export videos as `Channel/Season YYYY/` with `.nfo` + posters (hardlinks, no extra space) |
-| `library_rebuild` | Rebuild from scratch (`confirm: true`); originals untouched |
+| `library_rebuild` | Rebuild from scratch (`confirm: true`); removes only show folders ytome created (`.ytome-show`), originals untouched |
 
 Point a Jellyfin/Emby **Shows** library at `MEDIA_LIBRARY_PATH` (default `storage/library`).
 

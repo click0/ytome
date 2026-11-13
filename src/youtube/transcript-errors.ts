@@ -6,6 +6,7 @@
  * («Sign in to confirm you're not a bot»). Розрізняємо за відповіддю плеєра
  * та HTTP-статусами, які бачать наші fetch-хуки.
  */
+import { redactCredentials } from '../redact';
 
 export type TranscriptFailureReason =
   | 'blocked'          // YouTube відхиляє запити з цієї IP-адреси (бот-перевірка, 403, 429)
@@ -69,10 +70,15 @@ export function classifyTranscriptFailure(
   if (e.name === 'YoutubeTranscriptNotAvailableLanguageError') {
     return make('language', e.message || 'немає субтитрів потрібною мовою');
   }
-  if (e.name === 'YoutubeTranscriptDisabledError' || status === 'OK') {
+  // Тимчасові збої завантаження субтитрів — не «немає субтитрів»: такі відео
+  // черга підсумків інакше пропускала б назавжди, а Whisper розпізнавав би платно
+  if ((diag.transcriptStatus ?? 0) >= 500) {
+    return make('error', `тимчасовий збій YouTube при завантаженні субтитрів (HTTP ${diag.transcriptStatus}) — спробуйте пізніше`);
+  }
+  if (e.name === 'YoutubeTranscriptDisabledError' || e.name === 'YoutubeTranscriptNotAvailableError') {
     return make('no_captions', 'у відео немає субтитрів (ні ручних, ні автоматичних). ' +
       'Можна розпізнати аудіо: інструмент transcribe_audio (потрібен GROQ_API_KEY або OPENAI_API_KEY), ' +
       'або WHISPER_PROVIDER=auto для автоматичного розпізнавання');
   }
-  return make('error', e.message || 'невідома помилка');
+  return make('error', redactCredentials(e.message || 'невідома помилка'));
 }

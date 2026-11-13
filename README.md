@@ -149,16 +149,9 @@ DB_PATH=/home/yourname/projects/ytome/storage/archive.db
 
 ```bash
 npm run build
-node dist/db/init.js
-node dist/db/migrate-002.js
-node dist/db/migrate-003.js
-node dist/db/migrate-004.js
-node dist/db/migrate-005.js
-node dist/db/migrate-006.js
-node dist/db/migrate-007.js   # optional: summaries also create their tables on first use
 ```
 
-> After successful execution, `storage/archive.db` will be created — this file **is** your archive.
+Both MCP servers and the scheduler create or upgrade the database schema on start (`storage/archive.db` — this file **is** your archive). The `node dist/db/migrate-00X.js` scripts are still there for upgrading manually.
 
 ---
 
@@ -206,7 +199,14 @@ Server starts on port 3000 by default (`MCP_HTTP_PORT` in `.env`). Connect in cl
 http://localhost:3000/sse
 ```
 
-> For LAN access from another device: set `MCP_HOST=0.0.0.0` in `.env`. The server prints all LAN URLs on startup.
+> For LAN access from another device: set `MCP_HOST=0.0.0.0` **and** `MCP_API_KEY` in `.env` — without a key the server refuses to listen on the network. Clients send the key as `Authorization: Bearer <key>` or `x-api-key`. Without a key (localhost only) requests must carry a local `Host` header, which blocks DNS-rebinding attacks from web pages; `MCP_ALLOWED_HOSTS` adds names.
+
+### Security notes
+
+- Tool arguments come from the model, and the model reads untrusted text (titles, descriptions, transcripts, comments). So the tools themselves refuse dangerous targets: Drive uploads only go to `GOOGLE_DRIVE_FOLDER_ID` / `GOOGLE_DRIVE_ALLOWED_FOLDERS`, Sheets exports only to sheets ytome created or `GOOGLE_SHEETS_ALLOWED_IDS`, video IDs must be single videos, language codes are ISO only.
+- `drive_backup` uploads a snapshot **without** profile API keys and proxy credentials.
+- `library_rebuild` deletes only show folders ytome created (marked with `.ytome-show`), never other content of `MEDIA_LIBRARY_PATH`.
+- Proxy passwords and API keys are redacted from tool replies and logs; yt-dlp gets the proxy through environment variables, not its command line.
 
 ### 4.3 AI Proxy (optional)
 
@@ -386,7 +386,7 @@ re-sent to a second provider.
 | Tool | Description |
 |------|-------------|
 | `library_export` | Export downloaded videos as `Channel/Season YYYY/` with `.nfo` metadata and posters. Files are hardlinks — no extra disk space. Incremental and idempotent |
-| `library_rebuild` | Rebuild from scratch (cleans up after renames/deletions). Requires `confirm: true`; originals in `storage/media` are never touched |
+| `library_rebuild` | Rebuild from scratch (cleans up after renames/deletions). Requires `confirm: true`; removes only show folders ytome created (`.ytome-show`), originals in `storage/media` are never touched |
 
 > Point a Jellyfin/Emby **Shows** library (or Plex with the XBMCnfo agent) at
 > `MEDIA_LIBRARY_PATH` (default `storage/library`). Channel = show, publish year = season,

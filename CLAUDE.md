@@ -25,10 +25,14 @@ npm test
 - **Whisper**: `src/youtube/whisper.ts` — audio via yt-dlp → ffmpeg 10-min chunks → Groq/OpenAI `verbose_json`; last step of `fetchTranscript` for `no_captions` only when `WHISPER_PROVIDER` allows it (default `off` = only the explicit `transcribe_audio` tool); never re-sends audio to a second provider
 - **yt-dlp**: `src/youtube/ytdlp.ts` — every call adds `jsRuntimeArgs(version)` (YouTube needs a JS runtime since 2025.11.12: our own Node unless deno is on PATH); `searchVideos` = flat `ytsearchN:` (no quota; date sort is not available)
 - **Doctor**: `src/doctor/index.ts` — `runDoctor({ network })` used by the `doctor` tool and `npm run doctor`; each check really runs the dependency and returns status + fix
-- **Secrets**: `src/redact.ts` — `redactCredentials` / `safeErrorMessage` strip `user:pass@` from text that reaches the chat or logs (proxy URLs, yt-dlp command lines); use them for any error text that may contain a URL
+- **Secrets**: `src/redact.ts` — `redactCredentials` / `safeErrorMessage` strip `user:pass@` and `key=`/`access_token=` query params from text that reaches the chat, logs or the DB; use them for any error text that may contain a URL. yt-dlp gets the proxy via `HTTPS_PROXY` env (never `--proxy` in argv)
+- **Untrusted input**: tool arguments come from a model that reads attacker-controlled text. Video IDs go through `src/youtube/ids.ts` (11 chars; Zod + `assertVideoId` before any yt-dlp URL), languages are ISO codes, Drive folders / Sheets ids must be allow-listed, file paths from tools must be checked (regular file, size). Library writes use `writeFileNoFollow`; `library_rebuild` only removes folders with `.ytome-show`
+- **HTTP server**: `createApp(cfg)` in `src/mcp/server-http.ts` (testable without listening); sessions keyed by `transport.sessionId`, body passed to `handlePostMessage`; refuses non-loopback without `MCP_API_KEY`; Host allow-list without a key
+- **Concurrency**: `withLease()` (`src/db/lease.ts`) guards the channel check and the summary queue across processes
+- **Network**: every outbound axios call through a proxy needs `signal: AbortSignal.timeout(...)` — axios' `timeout` does not cover the proxy handshake. `selectProxy()` fails closed in single/rotation modes
 - **AI summaries**: `src/summary/` — `summarize.ts` (chunks with `[mm:ss]` marks → map-reduce via `ask()`, PROMPT_VERSION invalidates stored summaries), `index.ts` (table `summaries`, queue for channels with `auto_summary`, retry/skip by `TranscriptUnavailableError` reason, digest); run by the scheduler after each check (`runAutoSummaries`)
 - **Media library**: `src/export/` — Jellyfin/Emby/Plex export (`nfo.ts` pure generators, `library.ts` hardlink → block clone → copy/symlink chain + rebuild guard)
-- **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel)
+- **Logger**: `src/logger.ts` — pino structured logging, **stderr only** (stdout is the stdio MCP protocol channel); the Anthropic SDK gets a pino logger too (its default console logger writes to stdout)
 - **Validation**: `src/mcp/validation.ts` — Zod schemas for all MCP tool inputs
 
 ## Database
@@ -36,6 +40,8 @@ npm test
 SQLite singleton via `getDb()` from `src/db/init.ts`. Never call `db.close()` manually — the connection is closed automatically on process exit.
 
 Timestamps from `CURRENT_TIMESTAMP` are UTC without a zone — parse with `parseSqliteTime()` (`src/db/time.ts`), never `new Date(row.x)`.
+
+`ensureSchema()` (`src/db/schema.ts`) runs init + all migrations at startup of both MCP servers and the scheduler (no-op when current).
 
 Migrations: `src/db/migrate-002.ts` through `migrate-007.ts`
 (005: profiles + music tables, 006: sheet_exports, 007: summaries + `channels.auto_summary` —
@@ -65,7 +71,7 @@ Tests in `tests/` run against the real modules: `tests/helpers/temp-db.ts` gives
 storage + SQLite schema (init + all migrations) — call `useTempStorage()` at the top level, then
 import `src/` modules dynamically (they read `STORAGE_PATH`/`DB_PATH` on import). Only the network
 is mocked (googleapis, axios, child_process, Anthropic SDK). Don't reimplement logic inside a test.
-Entry points (`src/mcp/index.ts`, `server-http.ts`) are covered by `npm run smoke`, not coverage.
+The stdio entry point (`src/mcp/index.ts`) is covered by `npm run smoke`, not coverage; smoke also runs a real SSE session (initialize, tools/list, tools/call) against the HTTP server.
 
 ## CI/CD
 

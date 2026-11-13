@@ -33,14 +33,34 @@ export function escapeXml(s: string): string {
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
-/** Безпечне ім'я файлу/теки на Windows, Linux, macOS, FreeBSD */
-export function sanitizeFilename(s: string, maxLen = 120): string {
-  const cleaned = s
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i;
+
+/** Обрізати до maxBytes байтів UTF-8, не розрізаючи символ */
+function truncateBytes(s: string, maxBytes: number): string {
+  let out = '';
+  let bytes = 0;
+  for (const ch of s) {
+    const n = Buffer.byteLength(ch, 'utf8');
+    if (bytes + n > maxBytes) break;
+    out += ch;
+    bytes += n;
+  }
+  return out;
+}
+
+/**
+ * Безпечне ім'я файлу/теки на Windows, Linux, macOS, FreeBSD.
+ * Ліміт — у байтах UTF-8 (файлові системи обмежують ім'я 255 байтами, а кирилиця —
+ * 2 байти на символ, CJK — 3): з запасом на суфікси на кшталт "-thumb.jpg".
+ */
+export function sanitizeFilename(s: string, maxBytes = 120): string {
+  const clean = (v: string) => v
+    .replace(/[<>:"/\\|?*\x00-\x1F\x7F]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/, '');            // Windows не любить крапку/пробіл у кінці
-  const cut = cleaned.slice(0, maxLen).trim();
+  let cut = clean(truncateBytes(clean(s), maxBytes));
+  if (WINDOWS_RESERVED.test(cut)) cut = `_${cut}`;
   return cut || 'untitled';
 }
 
@@ -62,7 +82,8 @@ export function episodeCode(season: number, episode: number): string {
 export function episodeBaseName(channelName: string, video: NfoVideo, dayIndex: number): string {
   const season = seasonOf(video.published_at);
   const code = episodeCode(season, episodeOf(video.published_at, dayIndex));
-  return sanitizeFilename(`${channelName} - ${code} - ${video.title}`, 180);
+  // 200 байтів + "-thumb.jpg" / ".nfo" / ".webm" укладаються в 255
+  return sanitizeFilename(`${channelName} - ${code} - ${video.title}`, 200);
 }
 
 function parseTags(tags?: string | null): string[] {

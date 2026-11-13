@@ -6,7 +6,8 @@
  *
  * stdio: initialize + tools/list. Кожен рядок stdout мусить бути JSON-RPC —
  *        лог чи підказка в stdout ламає з'єднання з Claude Desktop.
- * HTTP:  /health і /tools відповідають, версія = package.json.
+ * HTTP:  /health і /tools відповідають, версія = package.json; без ключа — 401;
+ *        з ключем — повний обмін через SSE: initialize, tools/list, tools/call.
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -90,10 +91,69 @@ async function smokeStdio() {
   return tools.length;
 }
 
+/** SSE-клієнт: читає події з потоку /sse, шле JSON-RPC на endpoint сесії */
+async function sseSession(base, headers) {
+  const ctrl = new AbortController();
+  const res = await fetch(`${base}/sse`, { headers, signal: ctrl.signal });
+  if (res.status !== 200) throw new Error(`/sse answered ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const events = [];
+  const waiters = [];
+  (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+          const ev = { event: 'message', data: '' };
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('event: ')) ev.event = line.slice(7);
+            else if (line.startsWith('data: ')) ev.data += line.slice(6);
+          }
+          events.push(ev);
+          waiters.splice(0).forEach(w => w());
+        }
+      }
+    } catch { /* закрито */ }
+  })();
+  const next = async (pred, what) => withTimeout((async () => {
+    for (;;) {
+      const found = events.find(pred);
+      if (found) { events.splice(events.indexOf(found), 1); return found; }
+      await new Promise(r => waiters.push(r));
+    }
+  })(), 15_000, what);
+
+  const endpoint = (await next(e => e.event === 'endpoint', 'SSE endpoint')).data;
+  if (!/^\/messages\?sessionId=[0-9a-f-]{36}$/.test(endpoint)) throw new Error(`unexpected endpoint ${endpoint}`);
+  let id = 0;
+  const rpc = async (method, params) => {
+    const myId = ++id;
+    const post = await fetch(base + endpoint, {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: myId, method, params }),
+    });
+    if (post.status !== 202) throw new Error(`POST ${method} answered ${post.status}: ${await post.text()}`);
+    const ev = await next(e => e.event === 'message' && JSON.parse(e.data).id === myId, method);
+    return JSON.parse(ev.data);
+  };
+  const notify = (method) => fetch(base + endpoint, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method }),
+  });
+  return { rpc, notify, close: () => ctrl.abort() };
+}
+
 async function smokeHttp(expectedTools) {
   const port = 20000 + Math.floor(Math.random() * 20000);
+  const key = 'smoke-test-key';
   const child = spawn(process.execPath, [path.join(ROOT, 'dist/mcp/server-http.js')], {
-    cwd: ROOT, env: { ...env, MCP_HTTP_PORT: String(port), MCP_HOST: '127.0.0.1' },
+    cwd: ROOT, env: { ...env, MCP_HTTP_PORT: String(port), MCP_HOST: '127.0.0.1', MCP_API_KEY: key },
   });
   let stderr = '';
   child.stderr.on('data', d => { stderr += d; });
@@ -116,6 +176,26 @@ async function smokeHttp(expectedTools) {
     const tools = (await (await fetch(`${base}/tools`)).json()).tools;
     if (tools.length !== expectedTools) fail(`/tools lists ${tools.length} tools, stdio listed ${expectedTools}`);
     console.log(`http:  /health ok (${health.service} ${health.version}), /tools ${tools.length}`);
+
+    const noKey = await fetch(`${base}/sse`);
+    if (noKey.status !== 401) fail(`/sse without the API key answered ${noKey.status}, expected 401`);
+
+    const s = await sseSession(base, { Authorization: `Bearer ${key}` });
+    try {
+      const init = await s.rpc('initialize', {
+        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '1' },
+      });
+      if (init.result?.serverInfo?.name !== 'ytome') fail(`SSE initialize: ${JSON.stringify(init)}`);
+      await s.notify('notifications/initialized');
+      const list = await s.rpc('tools/list', {});
+      if ((list.result?.tools || []).length !== expectedTools) fail(`SSE tools/list: ${list.result?.tools?.length} tools`);
+      const call = await s.rpc('tools/call', { name: 'quota_status', arguments: {} });
+      const text = call.result?.content?.[0]?.text || '';
+      if (call.result?.isError || !text.includes('"limit"')) fail(`SSE tools/call quota_status: ${text.slice(0, 200)}`);
+      console.log(`http:  SSE session ok — initialize, tools/list (${expectedTools}), tools/call; 401 without key`);
+    } finally {
+      s.close();
+    }
   } finally {
     child.kill();
   }

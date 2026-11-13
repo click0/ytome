@@ -85,17 +85,37 @@ export function chunkTranscript(
     return chunks;
   }
 
-  // рядки по ~30 секунд
+  // рядки по ~30 секунд; порожні сегменти пропускаємо — шматок із самих міток часу
+  // модель «підсумувала» б з назви й опису
   const lines: Array<{ start: number; text: string }> = [];
   for (const s of t.segments) {
+    const text = s.text.trim();
+    if (!text) continue;
     const last = lines[lines.length - 1];
-    if (last && s.start - last.start < 30) last.text += ' ' + s.text.trim();
-    else lines.push({ start: s.start, text: s.text.trim() });
+    if (last && s.start - last.start < 30) last.text += ' ' + text;
+    else lines.push({ start: s.start, text });
   }
+  if (lines.length === 0) return [];
+
+  // Рядок, довший за шматок (Whisper дає сегменти по кілька хвилин), ріжемо по словах
+  const room = Math.max(200, maxChars - 16);
+  const fitted = lines.flatMap(line => {
+    if (line.text.length <= room) return [line];
+    const parts: Array<{ start: number; text: string }> = [];
+    let rest = line.text;
+    while (rest.length > room) {
+      let cut = rest.lastIndexOf(' ', room);
+      if (cut < room / 2) cut = room;
+      parts.push({ start: line.start, text: rest.slice(0, cut).trim() });
+      rest = rest.slice(cut).trim();
+    }
+    if (rest) parts.push({ start: line.start, text: rest });
+    return parts;
+  });
 
   const chunks: TranscriptChunk[] = [];
   let current: TranscriptChunk | null = null;
-  for (const line of lines) {
+  for (const line of fitted) {
     const rendered = `[${formatTimestamp(line.start)}] ${line.text}`;
     if (current && current.text.length + rendered.length + 1 > maxChars) {
       chunks.push(current);
@@ -115,10 +135,30 @@ export function chunkTranscript(
 /** JSON з відповіді: прибирає ```json, бере перший {...} */
 export function parseJsonReply(text: string): any {
   const clean = text.replace(/```(?:json)?/gi, '').trim();
-  const start = clean.indexOf('{');
-  const end = clean.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('AI reply contains no JSON object');
-  return JSON.parse(clean.slice(start, end + 1));
+  // Перший збалансований об'єкт {...} з урахуванням рядків: текст після нього
+  // (навіть із "}") не ламає розбір
+  for (let start = clean.indexOf('{'); start >= 0; start = clean.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    for (let i = start; i < clean.length; i++) {
+      const ch = clean[i];
+      if (inString) {
+        if (ch === '\\') i++;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) {
+        try {
+          return JSON.parse(clean.slice(start, i + 1));
+        } catch {
+          break;   // не JSON — пробуємо з наступної "{"
+        }
+      }
+    }
+  }
+  throw new Error('AI reply contains no JSON object');
 }
 
 /** "1:02:03" / "02:03" / 123 → секунди */

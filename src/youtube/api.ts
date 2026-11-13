@@ -2,12 +2,14 @@ import { google, youtube_v3 } from 'googleapis';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
+import { pipeline } from 'stream/promises';
 import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
-import { axiosProxyConfig, googleApiProxyConfig, getNextProxy, buildAgent } from '../proxy/manager';
+import { axiosProxyConfig, googleApiProxyConfig, selectProxy, buildAgent } from '../proxy/manager';
 import { downloadSubtitles, srtToText } from './ytdlp';
-import { getTranscriptCached } from '../cache/resolver';
+import { getTranscriptCached, transcriptMatchesLanguage } from '../cache/resolver';
 import { createLogger } from '../logger';
+import { safeErrorMessage } from '../redact';
 import { classifyTranscriptFailure, TranscriptUnavailableError, type TranscriptDiagnostics } from './transcript-errors';
 import { whisperProvider, transcribeWithWhisper } from './whisper';
 
@@ -17,7 +19,7 @@ const log = createLogger('youtube');
 
 const API_TIMEOUT = parseInt(process.env.YOUTUBE_API_TIMEOUT || '15000');
 
-// YouTube client без проксі (для googleapis через fetchOptions)
+// YouTube client без проксі
 const youtube = google.youtube({
   version: 'v3',
   auth: process.env.YOUTUBE_API_KEY,
@@ -35,7 +37,8 @@ export async function getYoutube(apiKey?: string) {
     version: 'v3',
     auth: apiKey || process.env.YOUTUBE_API_KEY,
     timeout: API_TIMEOUT,
-    ...(proxyOpts.agent ? { fetchOptions: { agent: proxyOpts.agent } } : {}),
+    // gaxios бере агент із верхнього рівня; fetchOptions.agent ігнорувався — запити йшли повз проксі
+    ...(proxyOpts.agent ? { agent: proxyOpts.agent } : {}),
   } as any);
 }
 
@@ -75,40 +78,46 @@ export interface VideoInfo {
 // Получение информации о канале
 // =============================================
 
+/**
+ * Канал за ID чи @handle. null — каналу немає; помилки API (квота, ключ, мережа)
+ * кидаються далі, щоб не видаватись за «канал не знайдено».
+ */
 export async function getChannelInfo(channelIdOrHandle: string): Promise<ChannelInfo | null> {
-  try {
-    const yt = await getYoutube();
-    const params: youtube_v3.Params$Resource$Channels$List = {
-      part: ['snippet', 'statistics'],
-      maxResults: 1,
-    };
+  const yt = await getYoutube();
+  assertQuota('channels.list');
+  const params: youtube_v3.Params$Resource$Channels$List = {
+    part: ['snippet', 'statistics'],
+    maxResults: 1,
+  };
 
-    if (channelIdOrHandle.startsWith('@')) {
-      params.forHandle = channelIdOrHandle.slice(1);
-    } else if (channelIdOrHandle.startsWith('UC')) {
-      params.id = [channelIdOrHandle];
-    } else {
-      params.forHandle = channelIdOrHandle;
-    }
-
-    const res = await yt.channels.list(params);
-    const channel = res.data.items?.[0];
-    if (!channel) return null;
-
-    return {
-      youtube_id:       channel.id!,
-      handle:           channel.snippet?.customUrl ?? undefined,
-      name:             channel.snippet?.title || 'Unknown',
-      description:      channel.snippet?.description ?? undefined,
-      thumbnail_url:    (channel.snippet?.thumbnails?.high?.url
-                     || channel.snippet?.thumbnails?.default?.url) ?? undefined,
-      subscriber_count: parseInt(channel.statistics?.subscriberCount || '0'),
-      video_count:      parseInt(channel.statistics?.videoCount || '0'),
-    };
-  } catch (err) {
-    log.error({ error: (err as Error).message }, 'getChannelInfo failed');
-    return null;
+  if (channelIdOrHandle.startsWith('@')) {
+    params.forHandle = channelIdOrHandle.slice(1);
+  } else if (channelIdOrHandle.startsWith('UC')) {
+    params.id = [channelIdOrHandle];
+  } else {
+    params.forHandle = channelIdOrHandle;
   }
+
+  let res;
+  try {
+    res = await yt.channels.list(params);
+  } catch (err) {
+    throw new Error(`YouTube API: ${safeErrorMessage(err)}`);
+  }
+  trackQuota('channels.list', channelIdOrHandle);
+  const channel = res.data.items?.[0];
+  if (!channel) return null;
+
+  return {
+    youtube_id:       channel.id!,
+    handle:           channel.snippet?.customUrl ?? undefined,
+    name:             channel.snippet?.title || 'Unknown',
+    description:      channel.snippet?.description ?? undefined,
+    thumbnail_url:    (channel.snippet?.thumbnails?.high?.url
+                   || channel.snippet?.thumbnails?.default?.url) ?? undefined,
+    subscriber_count: parseInt(channel.statistics?.subscriberCount || '0'),
+    video_count:      parseInt(channel.statistics?.videoCount || '0'),
+  };
 }
 
 // =============================================
@@ -215,7 +224,8 @@ export async function fetchTranscriptOfflineFirst(
 ): Promise<TranscriptResult> {
   if (!forceRefresh) {
     const cached = getTranscriptCached(videoId, lang);
-    if (cached.data) {
+    // Кеш іншою мовою не видаємо за запитану — йдемо в мережу
+    if (cached.data && transcriptMatchesLanguage(cached.data.language, lang)) {
       const segments = typeof cached.data.segments === 'string'
         ? JSON.parse(cached.data.segments)
         : cached.data.segments;
@@ -266,7 +276,7 @@ export async function fetchTranscript(
 
   try {
     const { fetchTranscript: fetchYT } = await import('youtube-transcript-plus');
-    const proxy = getNextProxy();
+    const proxy = selectProxy();
     const agent = proxy ? await buildAgent(proxy) : undefined;
 
     // Бібліотека чекає від хуків Response-подібний об'єкт (ok/status/text/json).
@@ -286,6 +296,9 @@ export async function fetchTranscript(
         transformResponse: [(d: string) => d],
         validateStatus: () => true,
         timeout: 30_000,
+        // timeout axios спрацьовує лише після підключення; проксі, що «мовчить» на
+        // CONNECT, інакше тримав би запит вічно
+        signal: AbortSignal.timeout(35_000),
         ...(agent ? { httpAgent: agent, httpsAgent: agent, proxy: false as const } : {}),
       });
       const body = typeof res.data === 'string' ? res.data : String(res.data ?? '');
@@ -324,7 +337,7 @@ export async function fetchTranscript(
     };
   } catch (err) {
     primaryError = err;
-    log.warn({ videoId, error: (err as Error).message, playability: diag.playability?.status },
+    log.warn({ videoId, error: safeErrorMessage(err), playability: diag.playability?.status },
       'youtube-transcript-plus failed, trying yt-dlp fallback');
     try {
       const srt = await downloadSubtitles(videoId, lang || 'en', opts.cookiePath);
@@ -333,7 +346,7 @@ export async function fetchTranscript(
         return { text, segments: [], language: lang || 'auto', source: 'yt-dlp' };
       }
     } catch (e2) {
-      log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
+      log.error({ videoId, error: safeErrorMessage(e2) }, 'yt-dlp fallback also failed');
     }
     // Причина — з основної спроби: там видно відповідь плеєра YouTube
     const failure = classifyTranscriptFailure(videoId, primaryError, diag);
@@ -357,27 +370,37 @@ export async function fetchTranscript(
 // Скачивание thumbnail
 // =============================================
 
+/**
+ * Мініатюра відео/каналу в storage/thumbnails/<id>.jpg; null — не вдалось.
+ * Пишеться в тимчасовий файл і перейменовується лише після повного завантаження:
+ * обірване з'єднання не лишає «кешованого» обрізаного файла. Жорсткий дедлайн —
+ * завислий проксі чи сервер не зупиняє планувальник.
+ */
 export async function downloadThumbnail(
-  videoId: string,
+  id: string,
   url: string
 ): Promise<string | null> {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null;
+  const dir = path.join(STORAGE_PATH, 'thumbnails');
+  const filePath = path.join(dir, `${id}.jpg`);
+  const tmpPath = `${filePath}.${process.pid}.part`;
   try {
-    const dir = path.join(STORAGE_PATH, 'thumbnails');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    const filePath = path.join(dir, `${videoId}.jpg`);
     if (fs.existsSync(filePath)) return filePath;
+    fs.mkdirSync(dir, { recursive: true });
 
-    const res = await axios.get(url, { responseType: 'stream', ...(await axiosProxyConfig()) });
-    const writer = fs.createWriteStream(filePath);
-    res.data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => resolve(filePath));
-      writer.on('error', reject);
+    const res = await axios.get(url, {
+      responseType: 'stream',
+      timeout: 30_000,
+      signal: AbortSignal.timeout(60_000),
+      maxContentLength: 10 * 1024 * 1024,
+      ...(await axiosProxyConfig()),
     });
+    await pipeline(res.data, fs.createWriteStream(tmpPath));
+    fs.renameSync(tmpPath, filePath);
+    return filePath;
   } catch (err) {
-    log.error({ videoId, error: (err as Error).message }, 'thumbnail download failed');
+    fs.rmSync(tmpPath, { force: true });
+    log.error({ id, error: safeErrorMessage(err) }, 'thumbnail download failed');
     return null;
   }
 }

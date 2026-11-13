@@ -67,6 +67,7 @@ export async function lookupVideoMeta(videoId: string): Promise<TranscriptMeta> 
     const res = await axios.get('https://www.youtube.com/oembed', {
       params: { url: `https://www.youtube.com/watch?v=${videoId}`, format: 'json' },
       timeout: 10_000,
+      signal: AbortSignal.timeout(15_000),
       ...(await axiosProxyConfig()),
     });
     return { title: res.data?.title, channel: res.data?.author_name };
