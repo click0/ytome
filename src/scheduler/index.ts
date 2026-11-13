@@ -8,6 +8,7 @@ import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { parseSqliteTime } from '../db/time';
+import { ensureSchema } from '../db/schema';
 import { processSummaryQueue } from '../summary/index';
 import { createLogger } from '../logger';
 
@@ -152,6 +153,7 @@ export async function checkAllChannels(): Promise<void> {
 // =============================================
 
 export function startScheduler(): void {
+  ensureSchema();
   log.info({ interval: CHECK_INTERVAL }, 'scheduler started');
 
   cron.schedule(CHECK_INTERVAL, async () => {

@@ -9,8 +9,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // Точки входу стартують сервер при імпорті — їх перевіряє npm run smoke
-      exclude: ['src/mcp/index.ts', 'src/mcp/server-http.ts'],
+      // stdio-точка входу стартує сервер при імпорті — її перевіряє npm run smoke
+      exclude: ['src/mcp/index.ts'],
       reporter: ['text', 'text-summary', 'html'],
       // Нижче — CI падає: нові модулі мають приходити з тестами
       thresholds: { statements: 85, branches: 75, functions: 85, lines: 85 },

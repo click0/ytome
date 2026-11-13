@@ -11,6 +11,7 @@ import path from 'path';
 import { TOOLS, handleTool } from './handlers.js';
 import { createLogger } from '../logger.js';
 import { safeErrorMessage } from '../redact.js';
+import { ensureSchema } from '../db/schema.js';
 
 const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')).version;
 
@@ -23,6 +24,7 @@ function err(message: string) {
 }
 
 async function main() {
+  ensureSchema();
   const server = new Server(
     { name: 'ytome', version: PKG_VERSION },
     { capabilities: { tools: {} } }
