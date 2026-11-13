@@ -77,7 +77,14 @@ describe('getYoutube', () => {
     const p = px.addProxy({ url: 'http://10.0.0.1:3128' });
     px.setProxyMode('single');
     await api.getYoutube();
-    expect((yt.youtube.mock.calls.at(-1)![0] as any).fetchOptions.agent).toBeDefined();
+    // gaxios читає агент із верхнього рівня (fetchOptions.agent ігнорувався)
+    expect((yt.youtube.mock.calls.at(-1)![0] as any).agent).toBeDefined();
+
+    // single без здорових проксі — помилка, а не тихе пряме з'єднання
+    px.setProxyEnabled(p.id, false);
+    await expect(api.getYoutube()).rejects.toThrow(/No healthy proxy/);
+    px.setProxyMode('fallback');
+    await expect(api.getYoutube()).resolves.toBeDefined();
     px.setProxyMode('disabled');
     px.removeProxy(p.id);
   });
@@ -100,11 +107,14 @@ describe('getChannelInfo', () => {
     expect(params).toEqual([['chan', undefined], [undefined, ['UCxyz']], ['chan', undefined]]);
   });
 
-  it('not found or API error → null', async () => {
+  it('not found → null; API errors are reported, not disguised as "not found"; quota is counted', async () => {
     yt.client.channels.list.mockResolvedValueOnce({ data: { items: [] } });
     expect(await api.getChannelInfo('@none')).toBeNull();
-    yt.client.channels.list.mockRejectedValueOnce(new Error('403 forbidden'));
-    expect(await api.getChannelInfo('@err')).toBeNull();
+    expect(used()).toEqual({ 'channels.list': 1 });
+    yt.client.channels.list.mockRejectedValueOnce(new Error('request to https://x/v3/channels?key=AIzaSECRET failed: quotaExceeded'));
+    const e = await api.getChannelInfo('@err').catch(x => x);
+    expect(e.message).toMatch(/^YouTube API: .*quotaExceeded/);
+    expect(e.message).not.toContain('AIzaSECRET');
   });
 });
 
@@ -167,6 +177,25 @@ describe('downloadThumbnail', () => {
   it('network error → null', async () => {
     yt.axiosGet.mockRejectedValueOnce(new Error('timeout'));
     expect(await api.downloadThumbnail('vid00000002', 'https://i/y.jpg')).toBeNull();
+  });
+
+  it('a connection dropped mid-body leaves no file that would be served as cached', async () => {
+    const broken = new Readable({ read() {} });
+    yt.axiosGet.mockResolvedValueOnce({ data: broken });
+    const pending = api.downloadThumbnail('vid00000003', 'https://i/z.jpg');
+    broken.push(Buffer.alloc(1000));
+    setImmediate(() => broken.destroy(new Error('ECONNRESET')));
+    expect(await pending).toBeNull();
+    expect(fs.readdirSync(path.join(storage, 'thumbnails')).filter(f => f.startsWith('vid00000003'))).toEqual([]);
+    // наступна спроба качає заново, а не повертає обрізаний файл
+    yt.axiosGet.mockResolvedValueOnce({ data: Readable.from([Buffer.from('full')]) });
+    expect(fs.readFileSync((await api.downloadThumbnail('vid00000003', 'https://i/z.jpg'))!, 'utf-8')).toBe('full');
+    expect(yt.axiosGet.mock.calls.at(-1)![1]).toMatchObject({ timeout: 30_000, signal: expect.any(AbortSignal) });
+  });
+
+  it('refuses ids that are not safe file names', async () => {
+    expect(await api.downloadThumbnail('../../x', 'https://i/a.jpg')).toBeNull();
+    expect(yt.axiosGet).not.toHaveBeenCalled();
   });
 });
 

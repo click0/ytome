@@ -247,7 +247,7 @@ async function askViaProxy(req: AIRequest): Promise<AIResponse> {
   if (req.json) body.response_format = { type: 'json_object' };
 
   const start = Date.now();
-  const resp  = await axios.post(endpoint, body, { headers, timeout: 30_000 });
+  const resp  = await axios.post(endpoint, body, { headers, timeout: 120_000, signal: AbortSignal.timeout(150_000) });
 
   const text     = resp.data?.choices?.[0]?.message?.content ?? '';
   const latency  = Date.now() - start;

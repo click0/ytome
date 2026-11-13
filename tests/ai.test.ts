@@ -123,6 +123,17 @@ describe('providers', () => {
   });
 });
 
+describe('local providers and the YouTube proxy', () => {
+  it('Ollama / LM Studio on local or private hosts never go through the proxy', () => {
+    for (const u of ['http://localhost:11434', 'http://127.0.0.1:1234', 'http://192.168.1.50:11434', 'http://10.0.0.5', 'http://nas.local:11434', 'http://[::1]:1234']) {
+      expect(providers.isLocalUrl(u)).toBe(true);
+    }
+    for (const u of ['https://api.groq.com/openai', 'https://openrouter.ai/api', 'not a url']) {
+      expect(providers.isLocalUrl(u)).toBe(false);
+    }
+  });
+});
+
 describe('claude adapter', () => {
   it('needs an API key', async () => {
     expect(claude.claudeAvailable()).toBe(false);

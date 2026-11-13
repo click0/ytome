@@ -57,6 +57,7 @@ export function parseFeed(xml: string): FeedEntry[] {
 export async function fetchChannelFeed(channelId: string): Promise<FeedEntry[]> {
   const res = await axios.get<string>(FEED_URL + encodeURIComponent(channelId), {
     timeout: 15_000,
+    signal: AbortSignal.timeout(20_000),   // охоплює й рукостискання з проксі
     responseType: 'text',
     ...(await axiosProxyConfig()),
   });

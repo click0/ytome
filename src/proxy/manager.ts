@@ -151,6 +151,21 @@ export function getNextProxy(): ProxyConfig | null {
   return chosen;
 }
 
+/**
+ * Проксі для запиту або null (пряме з'єднання). У режимах single / rotation
+ * без жодного здорового проксі — помилка, а не тихе пряме з'єднання з IP
+ * сервера (з cookies профілю). Пряме з'єднання як запасне — лише в fallback.
+ */
+export function selectProxy(): ProxyConfig | null {
+  const mode = getProxyMode();
+  const proxy = getNextProxy();
+  if (!proxy && (mode === 'single' || mode === 'rotation')) {
+    throw new Error(`No healthy proxy available (proxy mode "${mode}"). Run proxy_test, add a proxy, ` +
+      'or switch to proxy_set_mode fallback / disabled');
+  }
+  return proxy;
+}
+
 // =============================================
 // Створення HTTP-агента для axios / googleapis
 // =============================================
@@ -171,7 +186,7 @@ export async function buildAgent(proxy: ProxyConfig | null): Promise<any> {
  * Використовувати як: axios.get(url, axiosProxyConfig())
  */
 export async function axiosProxyConfig(): Promise<object> {
-  const proxy = getNextProxy();
+  const proxy = selectProxy();
   if (!proxy) return {};
 
   const agent = await buildAgent(proxy);
@@ -188,7 +203,7 @@ export async function axiosProxyConfig(): Promise<object> {
  * Конфіг для googleapis (передається як httpOptions).
  */
 export async function googleApiProxyConfig(): Promise<{ agent?: any }> {
-  const proxy = getNextProxy();
+  const proxy = selectProxy();
   if (!proxy) return {};
   markUsed(proxy.id);
   return { agent: await buildAgent(proxy) };
@@ -211,12 +226,16 @@ export async function checkProxyHealth(
       httpsAgent: agent,
       proxy:      false,
       timeout:    8000,
+      // timeout axios не охоплює рукостискання з проксі — проксі, що мовчить, висів би вічно
+      signal:     AbortSignal.timeout(10_000),
     });
     const latencyMs = Date.now() - start;
     markHealthy(proxy.id, true);
     return { ok: true, latencyMs };
   } catch (e: any) {
-    const msg = safeErrorMessage(e);
+    const msg = e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError'
+      ? 'no response from the proxy within 10s'
+      : safeErrorMessage(e);
     markHealthy(proxy.id, false, msg);
     return { ok: false, error: msg };
   }
