@@ -111,6 +111,7 @@ function buildArgs(videoId: string, opts: DownloadOptions, version?: string): st
 
   const args: string[] = [
     `https://www.youtube.com/watch?v=${videoId}`,
+    ...BASE_ARGS,
     '--no-playlist',
     '--output', outTemplate,
     '--no-warnings',
@@ -149,14 +150,25 @@ function buildArgs(videoId: string, opts: DownloadOptions, version?: string): st
     args.push('--cookies', opts.cookiePath);
   }
 
-  // ── Проксі ──────────────────────────────────
-  const proxyArg = buildProxyArg();
-  if (proxyArg) {
-    args.push('--proxy', proxyArg);
-  }
-
   return args;
 }
+
+/**
+ * Середовище процесу yt-dlp. Проксі — через HTTPS_PROXY/HTTP_PROXY, а не --proxy:
+ * командний рядок (з паролем проксі) бачить будь-який локальний користувач у ps.
+ */
+function ytdlpEnv(): NodeJS.ProcessEnv {
+  const proxy = buildProxyArg();
+  if (!proxy) return process.env;
+  return {
+    ...process.env,
+    HTTPS_PROXY: proxy, HTTP_PROXY: proxy, https_proxy: proxy, http_proxy: proxy,
+    NO_PROXY: '', no_proxy: '',
+  };
+}
+
+/** Спільні аргументи: чужий конфіг yt-dlp (--download-archive тощо) не впливає на ytome */
+const BASE_ARGS = ['--ignore-config'];
 
 /**
  * Отримати проксі-рядок у форматі, який розуміє yt-dlp.
@@ -213,11 +225,12 @@ export async function downloadVideo(
   const args     = buildArgs(videoId, opts, check.version);
   const format   = opts.format || 'audio';
 
-  log.info({ videoId, format, proxy: args.includes('--proxy') }, 'downloading');
+  const env = ytdlpEnv();
+  log.info({ videoId, format, proxy: env !== process.env }, 'downloading');
 
   let stdout: string, stderr: string;
   try {
-    ({ stdout, stderr } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+    ({ stdout, stderr } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS, env }));
   } catch (e) {
     // Повідомлення execFile містить увесь командний рядок, зокрема --proxy з паролем
     throw new Error(safeErrorMessage(e));
@@ -263,6 +276,7 @@ export async function downloadSubtitles(
 
   const args = [
     `https://www.youtube.com/watch?v=${videoId}`,
+    ...BASE_ARGS,
     '--no-playlist',
     '--skip-download',
     '--write-auto-sub',
@@ -280,11 +294,10 @@ export async function downloadSubtitles(
     args.push('--cookies', cookiePath);
   }
 
-  const proxyArg = buildProxyArg();
-  if (proxyArg) args.push('--proxy', proxyArg);
+  const env = ytdlpEnv();
 
   try {
-    await execFileAsync(YTDLP_BIN, args, { timeout: 60_000 });
+    await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, env });
 
     // Шукаємо завантажений .srt файл
     const srtPath = path.join(outDir, `${videoId}.${lang}.srt`);
@@ -326,17 +339,17 @@ export async function searchVideos(query: string, opts: { limit?: number } = {})
   const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
   const args = [
     `ytsearch${limit}:${query}`,
+    ...BASE_ARGS,
     '--flat-playlist', '--dump-single-json',
     '--no-warnings', '--quiet',
     '--retries', '3',
     ...jsRuntimeArgs(check.version),
   ];
-  const proxyArg = buildProxyArg();
-  if (proxyArg) args.push('--proxy', proxyArg);
+  const env = ytdlpEnv();
 
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 }));
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: 60_000, maxBuffer: 20 * 1024 * 1024, env }));
   } catch (e) {
     throw new Error(safeErrorMessage(e));
   }
@@ -380,6 +393,7 @@ export async function downloadAudioForTranscription(
 
   const args = [
     `https://www.youtube.com/watch?v=${videoId}`,
+    ...BASE_ARGS,
     '--no-playlist',
     '-f', 'bestaudio/best',
     '--output', path.join(outDir, '%(id)s.%(ext)s'),
@@ -391,12 +405,11 @@ export async function downloadAudioForTranscription(
   ];
   if (opts.maxDurationSec) args.push('--match-filter', `duration <=? ${opts.maxDurationSec}`);
   if (opts.cookiePath && fs.existsSync(opts.cookiePath)) args.push('--cookies', opts.cookiePath);
-  const proxyArg = buildProxyArg();
-  if (proxyArg) args.push('--proxy', proxyArg);
+  const env = ytdlpEnv();
 
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS }));
+    ({ stdout } = await execFileAsync(YTDLP_BIN, args, { timeout: DOWNLOAD_TIMEOUT_MS, env }));
   } catch (e) {
     throw new Error(safeErrorMessage(e));
   }

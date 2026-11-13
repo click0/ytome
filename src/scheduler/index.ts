@@ -8,6 +8,7 @@ import { getQuotaStatus, canAfford } from '../db/quota';
 import { filterVideos } from '../filters/index';
 import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { parseSqliteTime } from '../db/time';
+import { safeErrorMessage } from '../redact';
 import { ensureSchema } from '../db/schema';
 import { processSummaryQueue } from '../summary/index';
 import { createLogger } from '../logger';
@@ -41,7 +42,7 @@ async function detectNewVideos(
     try {
       entries = await fetchChannelFeed(channel.youtube_id);
     } catch (e: any) {
-      log.warn({ channel: channel.name, error: e.message }, 'RSS failed — falling back to search.list');
+      log.warn({ channel: channel.name, error: safeErrorMessage(e) }, 'RSS failed — falling back to search.list');
     }
     if (entries) {
       const known = getKnownVideoIds(entries.map(e => e.video_id));
@@ -109,8 +110,9 @@ export async function checkChannel(channel: any): Promise<number> {
 
   } catch (err: any) {
     const isQuota = err?.message?.includes('quota');
-    logCheck(channel.id, 0, isQuota ? 'quota_exceeded' : 'error', err.message);
-    log.error({ channel: channel.name, error: err.message }, 'channel check failed');
+    const message = safeErrorMessage(err);
+    logCheck(channel.id, 0, isQuota ? 'quota_exceeded' : 'error', message);
+    log.error({ channel: channel.name, error: message }, 'channel check failed');
     return 0;
   }
 }
@@ -165,7 +167,7 @@ export function startScheduler(): void {
   // Первая проверка сразу при запуске
   checkAllChannels()
     .then(runAutoSummaries)
-    .catch(e => log.error({ error: e.message }, 'initial check failed'));
+    .catch(e => log.error({ error: safeErrorMessage(e) }, 'initial check failed'));
 }
 
 /**
@@ -177,7 +179,7 @@ export async function runAutoSummaries(): Promise<void> {
   try {
     await processSummaryQueue();
   } catch (e: any) {
-    log.error({ error: e.message }, 'summary queue failed');
+    log.error({ error: safeErrorMessage(e) }, 'summary queue failed');
   }
 }
 

@@ -1514,7 +1514,15 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
         cookiePath:    args.cookie_path,
         notes:         args.notes,
       });
-      return ok({ success: true, profile });
+      // Ключ API не повертаємо — лише факт, що він є
+      return ok({
+        success: true,
+        profile: {
+          id: profile.id, name: profile.name, has_api_key: !!profile.youtube_api_key,
+          has_cookies: !!profile.cookie_path, is_default: profile.is_default, enabled: profile.enabled,
+          notes: profile.notes,
+        },
+      });
     }
 
     case 'profile_list': {

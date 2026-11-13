@@ -6,6 +6,7 @@
  * («Sign in to confirm you're not a bot»). Розрізняємо за відповіддю плеєра
  * та HTTP-статусами, які бачать наші fetch-хуки.
  */
+import { redactCredentials } from '../redact';
 
 export type TranscriptFailureReason =
   | 'blocked'          // YouTube відхиляє запити з цієї IP-адреси (бот-перевірка, 403, 429)
@@ -74,5 +75,5 @@ export function classifyTranscriptFailure(
       'Можна розпізнати аудіо: інструмент transcribe_audio (потрібен GROQ_API_KEY або OPENAI_API_KEY), ' +
       'або WHISPER_PROVIDER=auto для автоматичного розпізнавання');
   }
-  return make('error', e.message || 'невідома помилка');
+  return make('error', redactCredentials(e.message || 'невідома помилка'));
 }

@@ -18,6 +18,20 @@ interface SheetData {
   rows: (string | number | null)[][];
 }
 
+/**
+ * spreadsheet_id з виклику інструмента — лише таблиця, яку ytome вже створював
+ * (sheet_exports), або зі списку GOOGLE_SHEETS_ALLOWED_IDS. Інакше модель могла б
+ * очистити чужу таблицю й вивантажити туди приватні підписки.
+ */
+function assertAllowedSpreadsheet(id?: string): void {
+  if (!id) return;
+  const allowed = (process.env.GOOGLE_SHEETS_ALLOWED_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const known = getDb().prepare('SELECT 1 FROM sheet_exports WHERE spreadsheet_id = ?').get(id);
+  if (!known && !allowed.includes(id)) {
+    throw new Error(`Spreadsheet ${id} was not created by ytome. Add it to GOOGLE_SHEETS_ALLOWED_IDS in .env to export into it`);
+  }
+}
+
 /** Створити або оновити spreadsheet і записати дані */
 async function writeSheet(data: SheetData, spreadsheetId?: string): Promise<{
   spreadsheetId: string; url: string; rowCount: number;
@@ -75,6 +89,7 @@ export async function exportSubscriptionsToSheet(opts: {
   visibility?: 'private' | 'public';
   spreadsheetId?: string;
 } = {}) {
+  assertAllowedSpreadsheet(opts.spreadsheetId);
   const channels = getChannels(opts.visibility);
   const data: SheetData = {
     title: 'ytome — Subscriptions',
@@ -95,6 +110,7 @@ export async function exportWatchLaterToSheet(opts: {
   status?: 'pending' | 'done' | 'skipped' | 'all';
   spreadsheetId?: string;
 } = {}) {
+  assertAllowedSpreadsheet(opts.spreadsheetId);
   const items = getWatchLater({ status: opts.status || 'all' });
   const data: SheetData = {
     title: 'ytome — Watch Later',
@@ -114,6 +130,7 @@ export async function exportStatsToSheet(opts: {
   days?: number;
   spreadsheetId?: string;
 } = {}) {
+  assertAllowedSpreadsheet(opts.spreadsheetId);
   const history = getQuotaHistory(opts.days || 30);
   const breakdown = getQuotaBreakdown();
   const data: SheetData = {

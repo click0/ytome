@@ -386,7 +386,8 @@ describe('profiles', () => {
     fs.writeFileSync(cookies, `.youtube.com\tTRUE\t/\tTRUE\t${future}\tSID\tsecret\n`);
 
     const p = await call('profile_add', { name: 'home', cookie_path: cookies, youtube_api_key: 'K' });
-    expect(p.data.profile).toMatchObject({ name: 'home' });
+    expect(p.data.profile).toMatchObject({ name: 'home', has_api_key: true, has_cookies: true });
+    expect(JSON.stringify(p.data)).not.toContain('"K"');   // сам ключ не повертається
     const list = await call('profile_list');
     expect(list.data.profiles[0]).toMatchObject({ name: 'home', has_api_key: true, has_cookies: true, is_default: false });
     expect(JSON.stringify(list.data)).not.toContain('"K"'); // ключ не показуємо

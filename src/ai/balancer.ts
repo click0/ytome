@@ -16,6 +16,7 @@ import { askClaude, claudeAvailable, claudeModel, type ClaudeTier, type ClaudeEf
 import { askProvider, loadProviderConfigs, ProviderName } from './providers';
 import { getDb } from '../db/init';
 import { createLogger } from '../logger';
+import { redactCredentials } from '../redact';
 
 const log = createLogger('ai');
 
@@ -411,7 +412,7 @@ export function getRoutingInfo(): { mode: BalancerMode; proxy: { url?: string; m
   return {
     mode,
     proxy: proxyUrl
-      ? { url: proxyUrl, model: getProxyModel('simple'), status: '✅ active — internal balancer is fallback' }
+      ? { url: redactCredentials(proxyUrl), model: getProxyModel('simple'), status: '✅ active — internal balancer is fallback' }
       : { status: '⬜ not configured — using internal balancer' },
     routes,
   };

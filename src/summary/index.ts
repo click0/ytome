@@ -18,6 +18,7 @@ import { lookupVideoMeta, formatTimestamp } from '../export/transcript';
 import { profileOptsForVideo } from '../profiles/manager';
 import { summarizeTranscript, summaryLanguage, PROMPT_VERSION, type Chapter, type VideoSummary } from './summarize';
 import { createLogger } from '../logger';
+import { safeErrorMessage } from '../redact';
 
 const log = createLogger('summary');
 
@@ -206,7 +207,7 @@ export async function processSummaryQueue(opts: { limit?: number } = {}): Promis
       result.summarized++;
     } catch (e: any) {
       const permanent = e instanceof TranscriptUnavailableError && PERMANENT.has(e.reason);
-      const reason = e instanceof TranscriptUnavailableError ? `${e.reason}: ${e.message}` : e.message;
+      const reason = e instanceof TranscriptUnavailableError ? `${e.reason}: ${e.message}` : safeErrorMessage(e);
       result[saveFailure(v.id, reason, permanent)]++;
       log.warn({ videoId: v.youtube_id, reason }, 'summary failed');
       if (!(e instanceof TranscriptUnavailableError) && aiUnavailable(e)) {

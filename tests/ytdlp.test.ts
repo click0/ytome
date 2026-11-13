@@ -103,7 +103,10 @@ describe('downloadVideo', () => {
     px.addProxy({ url: 'socks5://10.0.0.9:1080' });
     px.setProxyMode('single');
     await y.downloadVideo('vid00000001');
-    expect(downloadCall().args.join(' ')).toContain('--proxy socks5://10.0.0.9:1080');
+    // проксі — у середовищі процесу, не в командному рядку (його видно в ps)
+    expect(downloadCall().args.join(' ')).not.toContain('10.0.0.9');
+    expect(downloadCall().opts.env).toMatchObject({ HTTPS_PROXY: 'socks5://10.0.0.9:1080', HTTP_PROXY: 'socks5://10.0.0.9:1080' });
+    expect(downloadCall().args).toContain('--ignore-config');
 
     for (const p of px.listProxies()) px.setProxyEnabled(p.id, false);
     await expect(y.downloadVideo('vid00000001')).rejects.toThrow(/no healthy proxy/);
@@ -111,16 +114,17 @@ describe('downloadVideo', () => {
     px.setProxyMode('fallback');
     proc.calls = [];
     await y.downloadVideo('vid00000001');
-    expect(downloadCall().args).not.toContain('--proxy');
+    expect(downloadCall().opts.env.HTTPS_PROXY).toBe(process.env.HTTPS_PROXY);   // без змін
   });
 
   it('a failed download does not leak proxy credentials from the command line', async () => {
     px.addProxy({ url: 'socks5://user:s3cret@10.0.0.9:1080' });
     px.setProxyMode('single');
-    proc.handler = (args) => new Error(`Command failed: yt-dlp ${args.join(' ')}\nERROR: 403`);
+    proc.handler = (args) => new Error(`Command failed: yt-dlp ${args.join(' ')}\nERROR: Unable to connect to proxy socks5://user:s3cret@10.0.0.9:1080`);
     const e = await y.downloadVideo('vid00000001').catch(err => err);
-    expect(e.message).toContain('--proxy socks5://***@10.0.0.9:1080');
+    expect(e.message).toContain('socks5://***@10.0.0.9:1080');
     expect(e.message).not.toContain('s3cret');
+    expect(downloadCall().args.join(' ')).not.toContain('s3cret');
   });
 
   it('errors when yt-dlp prints nothing or the file is missing', async () => {

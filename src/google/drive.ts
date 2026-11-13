@@ -6,29 +6,71 @@ import path from 'path';
 import os from 'os';
 import { Readable } from 'stream';
 import { getDriveClient } from './auth';
+import Database from 'better-sqlite3';
 import { getDb } from '../db/init';
+import { redactCredentials } from '../redact';
 import { getTranscript } from '../db/queries';
 import { formatTranscript, lookupVideoMeta } from '../export/transcript';
 import { createLogger } from '../logger';
 
 const log = createLogger('drive');
 
-const DB_PATH = process.env.DB_PATH || './storage/archive.db';
 
 /** Значення в лапках для мови запитів Drive (q) */
 function driveQuote(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/** Папки, куди дозволено вивантажувати: GOOGLE_DRIVE_FOLDER_ID + GOOGLE_DRIVE_ALLOWED_FOLDERS */
+function allowedFolders(): Set<string> {
+  return new Set([process.env.GOOGLE_DRIVE_FOLDER_ID, ...(process.env.GOOGLE_DRIVE_ALLOWED_FOLDERS || '').split(',')]
+    .map(f => f?.trim()).filter((f): f is string => !!f));
+}
+
+/**
+ * Папка призначення. folder_id з виклику інструмента приймається лише зі списку
+ * дозволених: інакше текст у відео/транскрипті міг би змусити модель вивантажити
+ * архів у чужу папку.
+ */
 function requireFolderId(folderId?: string): string {
   const id = folderId || process.env.GOOGLE_DRIVE_FOLDER_ID;
   if (!id) {
     throw new Error(
-      'No Drive folder ID. Pass folder_id or set GOOGLE_DRIVE_FOLDER_ID in .env. ' +
+      'No Drive folder ID. Set GOOGLE_DRIVE_FOLDER_ID in .env. ' +
       'The folder must be shared with the service account email.'
     );
   }
+  if (folderId && !allowedFolders().has(folderId)) {
+    throw new Error(
+      `Drive folder ${folderId} is not allowed. Use GOOGLE_DRIVE_FOLDER_ID or add it to GOOGLE_DRIVE_ALLOWED_FOLDERS in .env`
+    );
+  }
   return id;
+}
+
+/**
+ * Копія БД для бекапу: консистентний знімок (backup API, не копіювання файла
+ * під час запису) у приватній теці (0700/0600), без секретів — ключів API
+ * профілів і паролів проксі; VACUUM прибирає їх і з вільних сторінок.
+ */
+async function snapshotWithoutSecrets(dir: string, name: string): Promise<string> {
+  const file = path.join(dir, name);
+  await getDb().backup(file);
+  fs.chmodSync(file, 0o600);
+  const copy = new Database(file);
+  try {
+    const has = (t: string) => !!copy.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    if (has('profiles')) copy.prepare('UPDATE profiles SET youtube_api_key = NULL').run();
+    if (has('proxies')) {
+      const rows = copy.prepare('SELECT id, url FROM proxies').all() as Array<{ id: number; url: string }>;
+      const upd = copy.prepare('UPDATE proxies SET username = NULL, password = NULL, url = ? WHERE id = ?');
+      for (const r of rows) upd.run(redactCredentials(r.url), r.id);
+    }
+    copy.exec('VACUUM');
+  } finally {
+    copy.close();
+  }
+  return file;
 }
 
 async function uploadFile(opts: {
@@ -61,20 +103,18 @@ async function uploadFile(opts: {
   return { fileId: res.data.id!, action: 'created', link: res.data.webViewLink ?? undefined };
 }
 
-/** Бекап archive.db на Drive (з WAL checkpoint перед копіюванням) */
+/** Бекап archive.db на Drive — знімок без секретів */
 export async function backupDatabase(folderId?: string): Promise<{
-  fileId: string; action: string; name: string; sizeBytes: number;
+  fileId: string; action: string; name: string; sizeBytes: number; secrets_removed: boolean;
 }> {
   const targetFolder = requireFolderId(folderId);
 
-  // Скидаємо WAL у основний файл, потім копіюємо в temp — не вантажимо файл під час запису
-  getDb().pragma('wal_checkpoint(TRUNCATE)');
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
   const name = `archive-${stamp}.db`;
-  const tmpPath = path.join(os.tmpdir(), name);
-  fs.copyFileSync(DB_PATH, tmpPath);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytome-backup-'));
 
   try {
+    const tmpPath = await snapshotWithoutSecrets(dir, name);
     const result = await uploadFile({
       filePath: tmpPath,
       name,
@@ -83,10 +123,10 @@ export async function backupDatabase(folderId?: string): Promise<{
     });
     const sizeBytes = fs.statSync(tmpPath).size;
     log.info({ name, sizeBytes, action: result.action }, 'database backed up to Drive');
-    return { ...result, name, sizeBytes };
+    return { ...result, name, sizeBytes, secrets_removed: true };
   } finally {
     // Windows: потік завантаження може ще тримати файл (EBUSY) — повторюємо
-    fs.rmSync(tmpPath, { force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

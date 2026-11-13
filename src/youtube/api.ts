@@ -8,6 +8,7 @@ import { axiosProxyConfig, googleApiProxyConfig, getNextProxy, buildAgent } from
 import { downloadSubtitles, srtToText } from './ytdlp';
 import { getTranscriptCached } from '../cache/resolver';
 import { createLogger } from '../logger';
+import { safeErrorMessage } from '../redact';
 import { classifyTranscriptFailure, TranscriptUnavailableError, type TranscriptDiagnostics } from './transcript-errors';
 import { whisperProvider, transcribeWithWhisper } from './whisper';
 
@@ -106,7 +107,7 @@ export async function getChannelInfo(channelIdOrHandle: string): Promise<Channel
       video_count:      parseInt(channel.statistics?.videoCount || '0'),
     };
   } catch (err) {
-    log.error({ error: (err as Error).message }, 'getChannelInfo failed');
+    log.error({ error: safeErrorMessage(err) }, 'getChannelInfo failed');
     return null;
   }
 }
@@ -324,7 +325,7 @@ export async function fetchTranscript(
     };
   } catch (err) {
     primaryError = err;
-    log.warn({ videoId, error: (err as Error).message, playability: diag.playability?.status },
+    log.warn({ videoId, error: safeErrorMessage(err), playability: diag.playability?.status },
       'youtube-transcript-plus failed, trying yt-dlp fallback');
     try {
       const srt = await downloadSubtitles(videoId, lang || 'en', opts.cookiePath);
@@ -333,7 +334,7 @@ export async function fetchTranscript(
         return { text, segments: [], language: lang || 'auto', source: 'yt-dlp' };
       }
     } catch (e2) {
-      log.error({ videoId, error: (e2 as Error).message }, 'yt-dlp fallback also failed');
+      log.error({ videoId, error: safeErrorMessage(e2) }, 'yt-dlp fallback also failed');
     }
     // Причина — з основної спроби: там видно відповідь плеєра YouTube
     const failure = classifyTranscriptFailure(videoId, primaryError, diag);
@@ -377,7 +378,7 @@ export async function downloadThumbnail(
       writer.on('error', reject);
     });
   } catch (err) {
-    log.error({ videoId, error: (err as Error).message }, 'thumbnail download failed');
+    log.error({ videoId, error: safeErrorMessage(err) }, 'thumbnail download failed');
     return null;
   }
 }

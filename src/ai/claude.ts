@@ -23,7 +23,18 @@ function getClient(): Anthropic {
   if (!_client) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in .env');
-    _client = new Anthropic({ apiKey });
+    // Логи SDK (ANTHROPIC_LOG=info/debug) — у stderr через pino: типовий console.info
+    // писав би в stdout і ламав протокол stdio-сервера
+    const sdkLog = createLogger('anthropic-sdk');
+    _client = new Anthropic({
+      apiKey,
+      logger: {
+        error: (msg: string, ...rest: unknown[]) => sdkLog.error({ details: rest }, msg),
+        warn:  (msg: string, ...rest: unknown[]) => sdkLog.warn({ details: rest }, msg),
+        info:  (msg: string, ...rest: unknown[]) => sdkLog.info({ details: rest }, msg),
+        debug: (msg: string, ...rest: unknown[]) => sdkLog.debug({ details: rest }, msg),
+      },
+    });
   }
   return _client;
 }

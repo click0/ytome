@@ -141,7 +141,9 @@ describe('claude adapter', () => {
     enable('claude');
     net.create.mockResolvedValueOnce(claudeReply('ok'));
     const r = await claude.askClaude({ model: 'claude-haiku-5-5', system: 'S', prompt: 'p', json: true, effort: 'low' });
-    expect(net.sdkOpts.at(-1)).toEqual({ apiKey: 'sk-ant' });
+    expect(net.sdkOpts.at(-1)).toMatchObject({ apiKey: 'sk-ant' });
+    // логи SDK — у pino (stderr), не в console (stdout ламає stdio-протокол)
+    expect(Object.keys(net.sdkOpts.at(-1).logger).sort()).toEqual(['debug', 'error', 'info', 'warn']);
     expect(net.create.mock.calls[0][0]).toEqual({
       model: 'claude-haiku-5-5', max_tokens: 512 + 8000,
       system: 'S\nRespond ONLY with valid JSON. No markdown, no explanation.',

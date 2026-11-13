@@ -64,6 +64,8 @@ beforeEach(() => {
   for (const fn of [g.drive.files.list, g.drive.files.create, g.drive.files.update, g.drive.permissions.create,
     g.sheets.spreadsheets.create, g.sheets.spreadsheets.values.clear, g.sheets.spreadsheets.values.update]) fn.mockReset();
   delete process.env.GOOGLE_DRIVE_FOLDER_ID;
+  delete process.env.GOOGLE_DRIVE_ALLOWED_FOLDERS;
+  delete process.env.GOOGLE_SHEETS_ALLOWED_IDS;
   delete process.env.GOOGLE_SHEETS_SHARE_WITH;
   process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE = keyFile;
 });
@@ -95,20 +97,52 @@ describe('Drive', () => {
     await expect(drive.listDriveFiles()).rejects.toThrow(/No Drive folder ID/);
   });
 
-  it('backupDatabase uploads a checkpointed copy of the DB and removes the temp file', async () => {
+  it('folder_id from a tool call must be configured — no uploads to someone else\'s folder', async () => {
+    await expect(drive.backupDatabase('ATTACKER')).rejects.toThrow(/not allowed/);
+    await expect(drive.listDriveFiles('ATTACKER')).rejects.toThrow(/not allowed/);
+    expect(g.drive.files.create).not.toHaveBeenCalled();
+    process.env.GOOGLE_DRIVE_FOLDER_ID = 'MAIN';
+    process.env.GOOGLE_DRIVE_ALLOWED_FOLDERS = 'EXTRA, OTHER';
+    g.drive.files.list.mockResolvedValue({ data: { files: [] } });
+    await drive.listDriveFiles('OTHER');
+    await drive.listDriveFiles();
+    expect(g.drive.files.list.mock.calls.map(([q]) => q.q)).toEqual([
+      "'OTHER' in parents and trashed=false", "'MAIN' in parents and trashed=false",
+    ]);
+    delete process.env.GOOGLE_DRIVE_ALLOWED_FOLDERS;
+  });
+
+  it('backupDatabase uploads a consistent snapshot without secrets and removes it', async () => {
+    const db = init.getDb();
+    const { addProxy, removeProxy } = await import('../src/proxy/manager');
+    const proxy = addProxy({ url: 'http://user:pr0xy-secret@10.0.0.1:3128' });
+    db.prepare("INSERT INTO profiles (name, youtube_api_key) VALUES ('p', 'AIza-profile-key')").run();
+    process.env.GOOGLE_DRIVE_FOLDER_ID = 'FOLDER';
     g.drive.files.list.mockResolvedValueOnce({ data: { files: [] } });
-    let uploaded = '';
+    let uploadedPath = '';
+    let uploaded = Buffer.alloc(0);
     g.drive.files.create.mockImplementationOnce(async (req: any) => {
-      uploaded = await bodyText(req.media);
+      uploadedPath = req.media.body.path;
+      expect(fs.statSync(uploadedPath).mode & 0o777).toBe(process.platform === 'win32' ? fs.statSync(uploadedPath).mode & 0o777 : 0o600);
+      const chunks: Buffer[] = [];
+      for await (const c of req.media.body) chunks.push(c as Buffer);
+      uploaded = Buffer.concat(chunks);
       return { data: { id: 'F1', webViewLink: 'https://drive/F1' } };
     });
 
-    const r = await drive.backupDatabase('FOLDER');
-    expect(r).toMatchObject({ fileId: 'F1', action: 'created', link: 'https://drive/F1' });
+    const r = await drive.backupDatabase();
+    expect(r).toMatchObject({ fileId: 'F1', action: 'created', link: 'https://drive/F1', secrets_removed: true });
     expect(r.name).toMatch(/^archive-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.db$/);
-    expect(r.sizeBytes).toBe(fs.statSync(process.env.DB_PATH!).size);
-    expect(uploaded.startsWith('SQLite format 3')).toBe(true);
+    expect(uploaded.subarray(0, 15).toString()).toBe('SQLite format 3');
+    expect(uploaded.includes('pr0xy-secret')).toBe(false);
+    expect(uploaded.includes('AIza-profile-key')).toBe(false);
+    expect(uploaded.includes('Drive video')).toBe(true);                  // дані на місці
+    expect(fs.existsSync(path.dirname(uploadedPath))).toBe(false);         // тимчасову теку прибрано
     expect(g.drive.files.create.mock.calls[0][0].requestBody).toEqual({ name: r.name, parents: ['FOLDER'] });
+    // у робочій базі секрети лишились
+    expect((db.prepare('SELECT password FROM proxies WHERE id = ?').get(proxy.id) as any).password).toBe('pr0xy-secret');
+    removeProxy(proxy.id);
+    db.prepare("DELETE FROM profiles WHERE name = 'p'").run();
   });
 
   it('exportTranscriptToDrive updates an existing file; the query is escaped', async () => {
@@ -124,13 +158,15 @@ describe('Drive', () => {
   });
 
   it('exportTranscriptToDrive needs a cached transcript', async () => {
-    await expect(drive.exportTranscriptToDrive('noTranscr01', 'F')).rejects.toThrow(/No cached transcript/);
+    process.env.GOOGLE_DRIVE_FOLDER_ID = 'F';
+    await expect(drive.exportTranscriptToDrive('noTranscr01')).rejects.toThrow(/No cached transcript/);
   });
 
   it('listDriveFiles maps file metadata', async () => {
     g.drive.files.list.mockResolvedValueOnce({ data: { files: [
       { id: 'a', name: 'archive.db', size: '1024', modifiedTime: '2026-10-01T00:00:00Z' }, { id: 'b', name: 'x.txt' },
     ] } });
+    process.env.GOOGLE_DRIVE_FOLDER_ID = 'F';
     expect(await drive.listDriveFiles('F')).toEqual([
       { id: 'a', name: 'archive.db', size: '1024', modifiedTime: '2026-10-01T00:00:00Z' },
       { id: 'b', name: 'x.txt', size: undefined, modifiedTime: undefined },
@@ -164,8 +200,15 @@ describe('Sheets', () => {
   it('watch later export', async () => {
     const { addToWatchLater } = await import('../src/db/queries-v2');
     addToWatchLater('vidGoogle01', { tags: ['a', 'b'], note: 'n' });
+    // чужа таблиця — лише якщо явно дозволена
+    await expect(sheets.exportWatchLaterToSheet({ spreadsheetId: 'S2' })).rejects.toThrow(/not created by ytome/);
+    expect(g.sheets.spreadsheets.values.clear).not.toHaveBeenCalled();
+    process.env.GOOGLE_SHEETS_ALLOWED_IDS = 'S2';
     const r = await sheets.exportWatchLaterToSheet({ spreadsheetId: 'S2' });
+    delete process.env.GOOGLE_SHEETS_ALLOWED_IDS;
     expect(r.spreadsheetId).toBe('S2');
+    // таблиця, яку ytome створив раніше (S1), дозволена без налаштувань
+    await sheets.exportWatchLaterToSheet({ spreadsheetId: 'S1' });
     expect(g.sheets.spreadsheets.create).not.toHaveBeenCalled();
     expect(written()[1]).toEqual(expect.arrayContaining(['Drive video', 'Gee', 'medium', 'pending', 'a, b', 'n']));
   });
