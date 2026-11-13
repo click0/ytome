@@ -18,6 +18,7 @@ import { lookupVideoMeta, formatTimestamp } from '../export/transcript';
 import { profileOptsForVideo } from '../profiles/manager';
 import { summarizeTranscript, summaryLanguage, PROMPT_VERSION, type Chapter, type VideoSummary } from './summarize';
 import { createLogger } from '../logger';
+import { withLease } from '../db/lease';
 import { safeErrorMessage } from '../redact';
 
 const log = createLogger('summary');
@@ -61,12 +62,17 @@ export function getSummary(youtubeId: string): StoredSummary | null {
 /** TL;DR для списку відео (для стрічки) */
 export function getTldrs(youtubeIds: string[]): Map<string, string> {
   ensureSummarySchema();
-  if (youtubeIds.length === 0) return new Map();
-  const rows = getDb().prepare(`
-    SELECT v.youtube_id, s.tldr FROM summaries s JOIN videos v ON v.id = s.video_id
-    WHERE s.status = 'ok' AND v.youtube_id IN (${youtubeIds.map(() => '?').join(',')})
-  `).all(...youtubeIds) as Array<{ youtube_id: string; tldr: string }>;
-  return new Map(rows.map(r => [r.youtube_id, r.tldr]));
+  const out = new Map<string, string>();
+  // Порціями: SQLite має межу на кількість параметрів у запиті
+  for (let i = 0; i < youtubeIds.length; i += 500) {
+    const batch = youtubeIds.slice(i, i + 500);
+    const rows = getDb().prepare(`
+      SELECT v.youtube_id, s.tldr FROM summaries s JOIN videos v ON v.id = s.video_id
+      WHERE s.status = 'ok' AND v.youtube_id IN (${batch.map(() => '?').join(',')})
+    `).all(...batch) as Array<{ youtube_id: string; tldr: string }>;
+    for (const r of rows) out.set(r.youtube_id, r.tldr);
+  }
+  return out;
 }
 
 function saveSummary(videoDbId: number, s: VideoSummary, transcriptHash: string): void {
@@ -85,13 +91,14 @@ function saveSummary(videoDbId: number, s: VideoSummary, transcriptHash: string)
 }
 
 /** Невдача: skipped назавжди або retry з паузою 1, 2, 4, … год (до 48) */
-function saveFailure(videoDbId: number, reason: string, permanent: boolean): 'retry' | 'skipped' {
+function saveFailure(videoDbId: number, reason: string, permanent: boolean, countAttempt = true): 'retry' | 'skipped' {
   const db = getDb();
   const prev = db.prepare('SELECT attempts FROM summaries WHERE video_id = ?').get(videoDbId) as
     { attempts: number } | undefined;
-  const attempts = (prev?.attempts ?? 0) + 1;
+  // Недоступний AI — не вина відео: спробу не рахуємо, повтор за годину
+  const attempts = (prev?.attempts ?? 0) + (countAttempt ? 1 : 0);
   const status = permanent || attempts >= MAX_ATTEMPTS ? 'skipped' : 'retry';
-  const delayHours = Math.min(48, 2 ** (attempts - 1));
+  const delayHours = countAttempt ? Math.min(48, 2 ** Math.max(0, attempts - 1)) : 1;
   db.prepare(`
     INSERT INTO summaries (video_id, status, reason, attempts, next_attempt_at)
     VALUES (?, ?, ?, ?, datetime('now', ?))
@@ -194,6 +201,12 @@ function aiUnavailable(e: Error): boolean {
 }
 
 export async function processSummaryQueue(opts: { limit?: number } = {}): Promise<QueueResult> {
+  // Паралельні запуски підсумовували б ті самі відео й перевищували денний ліміт
+  const result = await withLease('summary-queue', 2 * 3600, () => processSummaryQueueLocked(opts));
+  return result ?? { processed: 0, summarized: 0, retry: 0, skipped: 0, stopped: 'another summary run is in progress' };
+}
+
+async function processSummaryQueueLocked(opts: { limit?: number }): Promise<QueueResult> {
   const dailyLimit = parseInt(process.env.SUMMARY_DAILY_LIMIT || '50');
   const result: QueueResult = { processed: 0, summarized: 0, retry: 0, skipped: 0 };
 
@@ -208,9 +221,10 @@ export async function processSummaryQueue(opts: { limit?: number } = {}): Promis
     } catch (e: any) {
       const permanent = e instanceof TranscriptUnavailableError && PERMANENT.has(e.reason);
       const reason = e instanceof TranscriptUnavailableError ? `${e.reason}: ${e.message}` : safeErrorMessage(e);
-      result[saveFailure(v.id, reason, permanent)]++;
+      const noAi = !(e instanceof TranscriptUnavailableError) && aiUnavailable(e);
+      result[saveFailure(v.id, reason, permanent, !noAi)]++;
       log.warn({ videoId: v.youtube_id, reason }, 'summary failed');
-      if (!(e instanceof TranscriptUnavailableError) && aiUnavailable(e)) {
+      if (noAi) {
         result.stopped = 'no AI provider available';
         break;
       }
@@ -245,6 +259,17 @@ export function summaryAsText(s: Pick<VideoSummary, 'tldr' | 'key_points' | 'cha
   ].filter(Boolean).join('\n\n');
 }
 
+/**
+ * Текст для Markdown: назви відео, каналів і текст від AI (на який впливає транскрипт)
+ * не можуть підмінити посилання, вставити зображення-трекер, HTML чи заголовок.
+ */
+export function md(text: string): string {
+  return String(text ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\\`*_[\]()<>!#|~]/g, '\\$&')
+    .trim();
+}
+
 export interface DigestResult {
   path: string;
   since: string;
@@ -277,19 +302,19 @@ export function buildDigest(opts: { since: string; channelYoutubeId?: string }):
   const date = new Date().toISOString().slice(0, 10);
   const lines = [`# Дайджест ${date}`, '', `Нові відео з ${opts.since.slice(0, 10)}: ${rows.length}`, ''];
   for (const [channel, videos] of byChannel) {
-    lines.push(`## ${channel}`, '');
+    lines.push(`## ${md(channel)}`, '');
     for (const v of videos) {
       const minutes = v.duration_sec ? ` · ${Math.round(v.duration_sec / 60)} хв` : '';
-      lines.push(`### [${v.title}](https://youtube.com/watch?v=${v.youtube_id})`,
+      lines.push(`### [${md(v.title)}](https://youtube.com/watch?v=${v.youtube_id})`,
         `${v.published_at.slice(0, 10)}${minutes}`, '');
       if (!v.tldr) { lines.push('_Підсумку ще немає_', ''); continue; }
       const s = rowToSummary(v);
-      lines.push(s.tldr, '');
-      if (s.key_points.length) lines.push(...s.key_points.map(p => `- ${p}`), '');
+      lines.push(md(s.tldr), '');
+      if (s.key_points.length) lines.push(...s.key_points.map(p => `- ${md(p)}`), '');
       if (s.chapters.length) {
         lines.push(...s.chapters.map(c => c.start === null
-          ? `- ${c.title}`
-          : `- [${formatTimestamp(c.start)}](${chapterLink(v.youtube_id, c.start)}) ${c.title}`), '');
+          ? `- ${md(c.title)}`
+          : `- [${formatTimestamp(c.start)}](${chapterLink(v.youtube_id, c.start)}) ${md(c.title)}`), '');
       }
     }
   }

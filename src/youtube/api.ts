@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import { trackQuota, assertQuota } from '../db/quota';
 import { axiosProxyConfig, googleApiProxyConfig, selectProxy, buildAgent } from '../proxy/manager';
 import { downloadSubtitles, srtToText } from './ytdlp';
-import { getTranscriptCached } from '../cache/resolver';
+import { getTranscriptCached, transcriptMatchesLanguage } from '../cache/resolver';
 import { createLogger } from '../logger';
 import { safeErrorMessage } from '../redact';
 import { classifyTranscriptFailure, TranscriptUnavailableError, type TranscriptDiagnostics } from './transcript-errors';
@@ -224,7 +224,8 @@ export async function fetchTranscriptOfflineFirst(
 ): Promise<TranscriptResult> {
   if (!forceRefresh) {
     const cached = getTranscriptCached(videoId, lang);
-    if (cached.data) {
+    // Кеш іншою мовою не видаємо за запитану — йдемо в мережу
+    if (cached.data && transcriptMatchesLanguage(cached.data.language, lang)) {
       const segments = typeof cached.data.segments === 'string'
         ? JSON.parse(cached.data.segments)
         : cached.data.segments;

@@ -17,15 +17,15 @@ import {
 import {
   addToWatchLater, getWatchLater, updateWatchLaterStatus,
   updateWatchLaterPriority, updateWatchLaterNote, getWatchLaterStats,
-  saveComments, getCachedComments, hasComments,
+  saveComments, getCachedComments, hasComments, watchLaterExists,
 } from '../db/queries-v2';
 import { getChannelInfo, fetchTranscript, getChannelVideos } from '../youtube/api';
-import { fetchTopComments, fetchChannelOwnerComments } from '../youtube/comments';
+import { fetchTopComments } from '../youtube/comments';
 import { checkChannel, checkAllChannels } from '../scheduler/index';
 import { exportOPML, exportJSON, parseOPML } from '../youtube/export';
 import { addProxy, removeProxy, setProxyEnabled, listProxies, getProxyMode, setProxyMode, checkAllProxies, checkProxyHealth } from '../proxy/manager';
-import { evaluateVideo, evaluateBatch } from '../evaluation/index';
-import { getVideoCacheStatus, getBatchCacheStatus, getTranscriptCached, getCommentsCached, getThumbnailCached, getMediaCached, getVideoMeta } from '../cache/resolver';
+import { evaluateVideo, evaluateBatch, type VideoEvalInput } from '../evaluation/index';
+import { getVideoCacheStatus, getBatchCacheStatus, getTranscriptCached, transcriptMatchesLanguage, getCommentsCached, getThumbnailCached, getMediaCached, getVideoMeta } from '../cache/resolver';
 import { getRoutingInfo, getAIUsageStats, getMode } from '../ai/balancer';
 import { checkAllProviders } from '../ai/providers';
 import { checkClaudeModels } from '../ai/claude';
@@ -381,7 +381,7 @@ export const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        video_id:  { type: 'string', description: 'YouTube video ID або масив через кому' },
+        video_id:  { type: 'string', description: 'YouTube video ID або URL' },
         video_ids: { type: 'array', items: { type: 'string' }, description: 'Масив video ID для batch перевірки' },
       },
     },
@@ -793,6 +793,25 @@ function extractVideoId(input: string): string {
   return id;
 }
 
+/**
+ * Відео з БД → вхід оцінки; однаково для evaluate_video і evaluate_batch.
+ * Субтитри — за наявністю транскрипту (раніше бралось з наявності мініатюри).
+ */
+function evalInputFromRow(v: any): VideoEvalInput {
+  const t = getTranscript(v.youtube_id);
+  let tags: string[] = [];
+  try { tags = v.tags ? JSON.parse(v.tags) : []; } catch { /* битий JSON — без тегів */ }
+  return {
+    youtube_id: v.youtube_id, title: v.title, description: v.description,
+    published_at: v.published_at, duration_sec: v.duration_sec,
+    view_count: v.view_count, like_count: v.like_count, comment_count: v.comment_count,
+    has_captions: !!t,
+    caption_type: !t ? 'none' : t.source === 'manual' ? 'manual' : 'auto',
+    tags,
+    contains_synthetic_media: !!v.contains_synthetic_media,
+  };
+}
+
 /** Канал з архіву за ID або @handle */
 function findChannel(idOrHandle: string): any {
   return getChannel(idOrHandle) || getChannels().find((c: any) => c.handle === idOrHandle);
@@ -908,7 +927,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       // 1. Перевіряємо локальний кеш
       if (!args.force_refresh) {
         const cached = getTranscriptCached(vid, args.language);
-        if (cached.data) {
+        if (cached.data && transcriptMatchesLanguage(cached.data.language, args.language)) {
           return ok({
             source:   '📦 local_cache',
             language: cached.data.language,
@@ -927,7 +946,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       // Проверяем кеш
       if (!args.force_refresh) {
         const cached = getTranscript(videoId);
-        if (cached) {
+        if (cached && transcriptMatchesLanguage(cached.language, args.language)) {
           return ok({
             video_id: videoId,
             source: 'cache',
@@ -1141,6 +1160,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'watch_later_update': {
+      if (!watchLaterExists(args.id)) return err(`Watch later item ${args.id} not found`);
       if (args.status)   updateWatchLaterStatus(args.id, args.status);
       if (args.priority) updateWatchLaterPriority(args.id, args.priority);
       if (args.note !== undefined) updateWatchLaterNote(args.id, args.note);
@@ -1204,9 +1224,15 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       }
 
       // Загружаем с YouTube
-      const fetched = ownerOnly
-        ? await fetchChannelOwnerComments(videoId, '')
+      // owner_only: кешуємо всі завантажені коментарі, а відповідаємо лише гілками автора —
+      // інакше кеш містив би тільки їх і подавав як «топ коментарі» наступним викликам
+      const all = ownerOnly ? await fetchTopComments(videoId, 100, true) : null;
+      const fetched = all
+        ? all.filter(c => c.is_channel_owner || c.replies?.some(r => r.is_channel_owner))
         : await fetchTopComments(videoId, limit, withReplies);
+      if (all?.length) {
+        saveComments(videoId, all.flatMap(c => [c, ...(c.replies || [])]));
+      }
 
       if (!fetched.length) return err(`No comments available for ${videoId}`);
 
@@ -1272,6 +1298,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'cache_status': {
+      if (!args.video_ids?.length && !args.video_id) return err('Pass video_id or video_ids');
       if (args.video_ids?.length) {
         const ids = (args.video_ids as string[]).map(extractVideoId);
         return ok(getBatchCacheStatus(ids));
@@ -1315,21 +1342,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       const video = getDb()
         .prepare('SELECT * FROM videos WHERE youtube_id = ?').get(extractVideoId(args.video_id)) as any;
       if (!video) return err(`Video ${args.video_id} not found in archive. Run sync first.`);
-      const result = await evaluateVideo({
-        youtube_id:    video.youtube_id,
-        title:         video.title,
-        description:   video.description,
-        published_at:  video.published_at,
-        duration_sec:  video.duration_sec,
-        view_count:    video.view_count,
-        like_count:    video.like_count,
-        comment_count: video.comment_count,
-        has_captions:  !!video.thumbnail_path,
-        caption_type:  'auto',
-        tags:          video.tags ? JSON.parse(video.tags) : [],
-        contains_synthetic_media: !!video.contains_synthetic_media,
-      });
-      return ok(result);
+      return ok(await evaluateVideo(evalInputFromRow(video)));
     }
 
     case 'evaluate_batch': {
@@ -1337,14 +1350,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
       const ids = [...new Set((args.video_ids as string[]).map(extractVideoId))];
       const rows = ids.map((id: string) => db3.prepare('SELECT * FROM videos WHERE youtube_id = ?').get(id)).filter(Boolean) as any[];
       if (rows.length === 0) return err('No matching videos found in archive');
-      const inputs = rows.map((v: any) => ({
-        youtube_id: v.youtube_id, title: v.title, description: v.description,
-        published_at: v.published_at, duration_sec: v.duration_sec,
-        view_count: v.view_count, like_count: v.like_count,
-        has_captions: true, caption_type: 'auto' as const,
-        tags: v.tags ? JSON.parse(v.tags) : [],
-      }));
-      const results = await evaluateBatch(inputs);
+      const results = await evaluateBatch(rows.map(evalInputFromRow));
       return ok({ total: results.length, results });
     }
 
@@ -1403,7 +1409,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'proxy_remove': {
-      removeProxy(args.id);
+      if (!removeProxy(args.id)) return err(`Proxy ${args.id} not found`);
       return ok({ success: true });
     }
 
@@ -1452,7 +1458,7 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'filter_remove': {
-      removeFilterRule(args.id);
+      if (!removeFilterRule(args.id)) return err(`Filter rule ${args.id} not found`);
       return ok({ success: true });
     }
 
@@ -1545,12 +1551,12 @@ export async function handleTool(name: string, rawArgs: any): Promise<any> {
     }
 
     case 'profile_remove': {
-      removeProfile(args.id);
+      if (!removeProfile(args.id)) return err(`Profile ${args.id} not found`);
       return ok({ success: true });
     }
 
     case 'profile_set_default': {
-      setDefaultProfile(args.id);
+      if (!setDefaultProfile(args.id)) return err(`Profile ${args.id} not found — default unchanged`);
       return ok({ success: true, default_profile_id: args.id });
     }
 

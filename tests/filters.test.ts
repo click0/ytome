@@ -129,3 +129,14 @@ describe('filterVideos', () => {
     expect(res.blocked).toEqual([{ video: bad, reason: expect.stringMatching(/sponsored/) }]);
   });
 });
+
+describe('@handle rules', () => {
+  it('match the archived channel with that handle (case-insensitive)', async () => {
+    const { seedChannel } = await import('./helpers/temp-db');
+    const { getDb } = await import('../src/db/init');
+    seedChannel(getDb(), { youtube_id: 'UCxyz', name: 'XYZ', handle: '@MyChannel' });
+    f.addFilterRule({ type: 'whitelist', scope: 'channel', value: '@mychannel' });
+    expect(f.applyFilters(video()).allowed).toBe(true);
+    expect(f.applyFilters(video({ channel_youtube_id: 'UCother' })).allowed).toBe(false);
+  });
+});

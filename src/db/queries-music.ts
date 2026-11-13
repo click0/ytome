@@ -1,4 +1,5 @@
 import { getDb } from './init';
+import { escapeLike } from './queries-v2';
 import type { MusicPlaylistInfo, MusicTrackInfo } from '../youtube/music';
 
 // =============================================
@@ -85,6 +86,11 @@ export function saveMusicTracks(playlistDbId: number, tracks: MusicTrackInfo[]):
       );
     }
     // Треки що зникли з плейлиста — позначаємо недоступними (не видаляємо: це архів)
+    if (currentIds.length === 0) {
+      // Плейлист спорожнів — усі збережені треки тепер недоступні
+      return db.prepare('UPDATE music_tracks SET is_available = 0 WHERE playlist_id = ? AND is_available = 1')
+        .run(playlistDbId).changes;
+    }
     if (currentIds.length > 0) {
       const placeholders = currentIds.map(() => '?').join(',');
       return db.prepare(`
@@ -111,7 +117,7 @@ export function getMusicTracks(playlistDbId: number, opts: {
   const params: any[] = [playlistDbId];
 
   if (!opts.includeUnavailable) sql += ' AND is_available = 1';
-  if (opts.artist) { sql += ' AND artist LIKE ?'; params.push(`%${opts.artist}%`); }
+  if (opts.artist) { sql += " AND artist LIKE ? ESCAPE '\\'"; params.push(`%${escapeLike(opts.artist)}%`); }
   sql += ' ORDER BY position';
 
   return db.prepare(sql).all(...params) as any[];

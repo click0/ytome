@@ -43,9 +43,10 @@ export function addProfile(input: {
     INSERT INTO profiles (name, youtube_api_key, cookie_path, notes)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
-      youtube_api_key = excluded.youtube_api_key,
-      cookie_path     = excluded.cookie_path,
-      notes           = excluded.notes
+      -- оновлення профілю не стирає те, що не передали
+      youtube_api_key = COALESCE(excluded.youtube_api_key, profiles.youtube_api_key),
+      cookie_path     = COALESCE(excluded.cookie_path, profiles.cookie_path),
+      notes           = COALESCE(excluded.notes, profiles.notes)
     RETURNING *
   `).get(
     input.name,
@@ -57,10 +58,12 @@ export function addProfile(input: {
   return rowToProfile(row);
 }
 
-export function removeProfile(id: number): void {
+export function removeProfile(id: number): boolean {
   const db = getDb();
-  db.prepare('UPDATE channels SET profile_id = NULL WHERE profile_id = ?').run(id);
-  db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+  return db.transaction(() => {
+    db.prepare('UPDATE channels SET profile_id = NULL WHERE profile_id = ?').run(id);
+    return db.prepare('DELETE FROM profiles WHERE id = ?').run(id).changes > 0;
+  })();
 }
 
 export function listProfiles(): Profile[] {
@@ -80,13 +83,15 @@ export function getDefaultProfile(): Profile | null {
   return row ? rowToProfile(row) : null;
 }
 
-export function setDefaultProfile(id: number): void {
+/** false — профілю з таким id немає (поточний default лишається) */
+export function setDefaultProfile(id: number): boolean {
   const db = getDb();
-  const tx = db.transaction(() => {
+  if (!db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(id)) return false;
+  db.transaction(() => {
     db.prepare('UPDATE profiles SET is_default = 0').run();
     db.prepare('UPDATE profiles SET is_default = 1 WHERE id = ?').run(id);
-  });
-  tx();
+  })();
+  return true;
 }
 
 export function markProfileUsed(id: number): void {

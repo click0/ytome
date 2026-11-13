@@ -88,9 +88,8 @@ export function addFilterRule(input: {
   return rowToRule(row);
 }
 
-export function removeFilterRule(id: number): void {
-  const db = getDb();
-  db.prepare('DELETE FROM filter_rules WHERE id = ?').run(id);
+export function removeFilterRule(id: number): boolean {
+  return getDb().prepare('DELETE FROM filter_rules WHERE id = ?').run(id).changes > 0;
 }
 
 export function setFilterEnabled(id: number, enabled: boolean): void {
@@ -217,11 +216,23 @@ function matchRule(rule: FilterRule, video: VideoCandidate): boolean {
   const value = rule.case_sensitive ? rule.value        : rule.value.toLowerCase();
   const text  = rule.case_sensitive ? field             : field.toLowerCase();
 
-  // channel — точний збіг ID (без урахування регістру, якщо правило так налаштоване)
-  if (rule.scope === 'channel') return text === value;
+  // channel — точний збіг ID (без урахування регістру, якщо правило так налаштоване);
+  // @handle зіставляється з ID каналу через архів (у відео є лише ID)
+  if (rule.scope === 'channel') {
+    if (rule.value.startsWith('@')) return channelIdForHandle(rule.value) === field;
+    return text === value;
+  }
 
   // title / description — пошук підрядка
   return text.includes(value);
+}
+
+/** ID каналу з архіву за @handle (без урахування регістру) */
+function channelIdForHandle(handle: string): string | null {
+  const row = getDb().prepare(
+    "SELECT youtube_id FROM channels WHERE lower(handle) = lower(?) OR lower('@' || handle) = lower(?)"
+  ).get(handle, handle) as { youtube_id: string } | undefined;
+  return row?.youtube_id ?? null;
 }
 
 function getField(video: VideoCandidate, scope: FilterScope): string {

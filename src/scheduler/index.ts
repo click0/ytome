@@ -10,6 +10,7 @@ import { resolveProfileForChannel, markProfileUsed } from '../profiles/manager';
 import { parseSqliteTime } from '../db/time';
 import { safeErrorMessage } from '../redact';
 import { ensureSchema } from '../db/schema';
+import { withLease } from '../db/lease';
 import { processSummaryQueue } from '../summary/index';
 import { createLogger } from '../logger';
 
@@ -42,6 +43,10 @@ async function detectNewVideos(
     try {
       entries = await fetchChannelFeed(channel.youtube_id);
     } catch (e: any) {
+      // 404 — канал видалено чи заблоковано: search.list (100 од.) щоразу тут не допоможе
+      if (e?.response?.status === 404) {
+        throw new Error('channel feed returned 404 — the channel may be deleted or terminated');
+      }
       log.warn({ channel: channel.name, error: safeErrorMessage(e) }, 'RSS failed — falling back to search.list');
     }
     if (entries) {
@@ -122,6 +127,12 @@ export async function checkChannel(channel: any): Promise<number> {
 // =============================================
 
 export async function checkAllChannels(): Promise<void> {
+  // Один запуск одночасно — і в межах процесу, і між планувальником та MCP-сервером
+  const done = await withLease('channel-check', 2 * 3600, async () => { await checkAllChannelsLocked(); return true; });
+  if (done === null) log.info('another channel check is still running — skipped');
+}
+
+async function checkAllChannelsLocked(): Promise<void> {
   const quota = getQuotaStatus();
   if (quota.critical) {
     log.warn({ used: quota.used, limit: quota.limit }, 'quota critical — skipping scheduled check');
@@ -162,7 +173,7 @@ export function startScheduler(): void {
     log.info('running scheduled check');
     await checkAllChannels();
     await runAutoSummaries();
-  });
+  }, { noOverlap: true });
 
   // Первая проверка сразу при запуске
   checkAllChannels()

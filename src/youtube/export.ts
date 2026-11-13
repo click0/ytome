@@ -174,7 +174,7 @@ export function parseOPML(content: string): Array<{
   youtube_id: string;
   handle?: string;
   name: string;
-  visibility: 'public' | 'private';
+  visibility?: 'public' | 'private';
   notes?: string;
 }> {
   const results: any[] = [];
@@ -193,7 +193,8 @@ export function parseOPML(content: string): Array<{
       youtube_id: get('youtubeId')!,
       handle:     get('handle'),
       name:       get('text') || get('title') || 'Unknown',
-      visibility: (get('visibility') as any) || 'private',
+      // без атрибута — undefined: тоді import_opml застосує default_visibility
+      visibility: (['public', 'private'].includes(get('visibility') || '') ? get('visibility') : undefined) as any,
       notes:      get('notes'),
     });
   }

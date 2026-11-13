@@ -235,11 +235,21 @@ describe('comments', () => {
     expect(m.fetchTopComments).toHaveBeenCalledTimes(1);
   });
 
-  it('owner-only and empty results', async () => {
-    m.fetchChannelOwnerComments.mockResolvedValueOnce([]);
-    const r = await call('get_comments', { video_id: 'vidBeta0001', owner_only: true });
-    expect(r.error).toMatch(/No comments available/);
-    expect(m.fetchChannelOwnerComments).toHaveBeenCalledWith('vidBeta0001', '');
+  it('owner-only: answers with owner threads but caches all fetched comments', async () => {
+    m.fetchTopComments.mockResolvedValueOnce([]);
+    expect((await call('get_comments', { video_id: 'vidAlpha002', owner_only: true })).error).toMatch(/No comments available/);
+
+    m.fetchTopComments.mockResolvedValueOnce([
+      { youtube_comment_id: 'o1', author_name: 'Owner', text: 'pinned', like_count: 1, is_channel_owner: true, replies: [] },
+      { youtube_comment_id: 'v1', author_name: 'Viewer', text: 'top', like_count: 50, is_channel_owner: false, replies: [] },
+    ]);
+    const owner = await call('get_comments', { video_id: 'vidAlpha002', owner_only: true });
+    expect(m.fetchTopComments).toHaveBeenLastCalledWith('vidAlpha002', 100, true);
+    expect(owner.data.comments.map((c: any) => c.id)).toEqual(['o1']);
+    // наступний звичайний запит із кешу бачить і коментарі глядачів
+    const plain = await call('get_comments', { video_id: 'vidAlpha002' });
+    expect(plain.data.source).toBe('📦 local_cache');
+    expect(plain.data.comments.map((c: any) => c.youtube_comment_id).sort()).toEqual(['o1', 'v1']);
   });
 });
 
@@ -566,5 +576,23 @@ describe('input validation', () => {
     expect((await call('evaluate_batch', { video_ids: many })).error).toMatch(/at most 50/);
     const r = await call('evaluate_batch', { video_ids: ['vidAlpha001', 'https://youtu.be/vidAlpha001', 'vidAlpha001'] });
     expect(r.data.total).toBe(1);
+  });
+});
+
+describe('not-found and argument errors', () => {
+  it('removing or updating something that does not exist is an error, not "success"', async () => {
+    expect((await call('proxy_remove', { id: 9999 })).error).toMatch(/not found/);
+    expect((await call('filter_remove', { id: 9999 })).error).toMatch(/not found/);
+    expect((await call('profile_remove', { id: 9999 })).error).toMatch(/not found/);
+    expect((await call('profile_set_default', { id: 9999 })).error).toMatch(/not found/);
+    expect((await call('watch_later_update', { id: 9999, status: 'done' })).error).toMatch(/not found/);
+    expect((await call('cache_status', {})).error).toMatch(/video_id or video_ids/);
+  });
+
+  it('re-adding a profile without a key keeps the stored key', async () => {
+    await call('profile_add', { name: 'keep', youtube_api_key: 'K1' });
+    await call('profile_add', { name: 'keep', notes: 'n' });
+    const row: any = init.getDb().prepare("SELECT youtube_api_key, notes FROM profiles WHERE name = 'keep'").get();
+    expect(row).toEqual({ youtube_api_key: 'K1', notes: 'n' });
   });
 });

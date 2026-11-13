@@ -67,7 +67,7 @@ describe('exportOPML', () => {
 describe('parseOPML', () => {
   it('reads only outlines with youtubeId; defaults name and visibility', () => {
     expect(ex.parseOPML('<outline text="Folder"><outline youtubeId="UCa"/><outline xmlUrl="x"/></outline>'))
-      .toEqual([{ youtube_id: 'UCa', handle: undefined, name: 'Unknown', visibility: 'private', notes: undefined }]);
+      .toEqual([{ youtube_id: 'UCa', handle: undefined, name: 'Unknown', visibility: undefined, notes: undefined }]);
   });
 });
 

@@ -97,6 +97,13 @@ describe('checkChannel', () => {
     expect(net.getChannelVideos.mock.calls[0][1].publishedAfter).toBe('2026-10-05T10:00:00.000Z');
   });
 
+  it('a feed that returns 404 (deleted channel) does not fall back to search.list every run', async () => {
+    net.fetchChannelFeed.mockRejectedValueOnce(Object.assign(new Error('404'), { response: { status: 404 } }));
+    expect(await s.checkChannel(channel('UCs'))).toBe(0);
+    expect(net.getChannelVideos).not.toHaveBeenCalled();
+    expect(lastLog()).toMatchObject({ status: 'error', error_message: expect.stringMatching(/404/) });
+  });
+
   it('uses the channel profile API key', async () => {
     const { addProfile, assignChannelProfile, getProfile } = await import('../src/profiles/manager');
     const p = addProfile({ name: 'quota2', youtubeApiKey: 'KEY2' });

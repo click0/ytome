@@ -98,9 +98,8 @@ export function addProxy(input: {
   return rowToProxy(row);
 }
 
-export function removeProxy(id: number): void {
-  const db = getDb();
-  db.prepare('DELETE FROM proxies WHERE id = ?').run(id);
+export function removeProxy(id: number): boolean {
+  return getDb().prepare('DELETE FROM proxies WHERE id = ?').run(id).changes > 0;
 }
 
 export function setProxyEnabled(id: number, enabled: boolean): void {

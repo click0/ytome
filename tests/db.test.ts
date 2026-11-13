@@ -266,7 +266,7 @@ describe('quota', () => {
       { operation: 'videos.list', calls: 1, total_units: 3 },
     ]);
     expect(quota.getQuotaHistory(7)).toEqual([
-      { date: new Date().toISOString().slice(0, 10), total_used: 103, percent: 1 },
+      { date: quota.quotaDay(), total_used: 103, percent: 1 },
     ]);
   });
 
@@ -303,5 +303,50 @@ describe('music playlists', () => {
     expect(music.removeMusicPlaylist('PL1')).toBe(true);
     expect(music.removeMusicPlaylist('PL1')).toBe(false);
     expect(music.getMusicPlaylists()).toEqual([]);
+  });
+});
+
+describe('data fixes', () => {
+  it('quota day follows Pacific time (YouTube resets at midnight PT, not UTC)', () => {
+    // 05:00 UTC 2 листопада = 22:00 PDT 1 листопада
+    expect(quota.quotaDay(new Date('2026-11-02T05:00:00Z'))).toBe('2026-11-01');
+    expect(quota.quotaDay(new Date('2026-11-02T09:00:00Z'))).toBe('2026-11-02');
+  });
+
+  it('watch-later tag and music artist filters match literally (% and _ are not wildcards)', () => {
+    db().prepare(`UPDATE watch_later SET tags = '["w_rk"]'
+      WHERE video_id = (SELECT id FROM videos WHERE youtube_id = 'vid00000001')`).run();
+    const ids = (tag: string) => v2.getWatchLater({ status: 'all', tag }).map(i => i.youtube_id);
+    expect(ids('w_rk')).toEqual(['vid00000001']);
+    expect(ids('work')).toEqual([]);
+    expect(ids('%')).toEqual([]);
+  });
+
+  it('up to 5 replies per comment, not 5 in total', () => {
+    const comments = [
+      { youtube_comment_id: 'pA', author_name: 'A', text: 'a', like_count: 9 },
+      { youtube_comment_id: 'pB', author_name: 'B', text: 'b', like_count: 8 },
+      ...Array.from({ length: 6 }, (_, i) => ({ youtube_comment_id: `rA${i}`, author_name: 'x', text: 'r', like_count: 100 - i, parent_id: 'pA' })),
+      ...Array.from({ length: 2 }, (_, i) => ({ youtube_comment_id: `rB${i}`, author_name: 'y', text: 'r', like_count: 1, parent_id: 'pB' })),
+    ];
+    v2.saveComments('vid00000002', comments);
+    const top = v2.getCachedComments('vid00000002', { withReplies: true, limit: 10 });
+    const replies = Object.fromEntries(top.map(c => [c.youtube_comment_id, c.replies!.length]));
+    expect(replies).toMatchObject({ pA: 5, pB: 2 });
+  });
+
+  it('a playlist that became empty marks its tracks unavailable', () => {
+    const id = music.addMusicPlaylist({ playlist_id: 'PLempty', title: 'E' } as any);
+    music.saveMusicTracks(id, [{ video_youtube_id: 't1', position: 1, title: 'x' }] as any);
+    expect(music.saveMusicTracks(id, [])).toEqual({ saved: 0, removed: 1 });
+    expect(music.getMusicTracks(id)).toEqual([]);
+    expect(music.getMusicTracks(id, { artist: '%' })).toEqual([]);
+  });
+
+  it('a cached transcript in another language is not served as the requested one', () => {
+    expect(cache.transcriptMatchesLanguage('en', 'uk')).toBe(false);
+    expect(cache.transcriptMatchesLanguage('uk', 'uk-UA')).toBe(true);
+    expect(cache.transcriptMatchesLanguage('pt-BR', 'pt')).toBe(true);
+    expect(cache.transcriptMatchesLanguage('en', undefined)).toBe(true);
   });
 });
