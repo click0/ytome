@@ -287,7 +287,7 @@ summaries and `evaluate_video`; in Claude Desktop / claude.ai, `analyze_transcri
 
 | Provider | Settings |
 |----------|----------|
-| Claude | `ANTHROPIC_API_KEY`. Tiers: Haiku 5.5 → Sonnet 5.5 → Opus 5.5, override with `CLAUDE_MODEL_FAST` / `_BALANCED` / `_TOP` (e.g. `claude-fable-5-1`) |
+| Claude | `ANTHROPIC_API_KEY`. Tiers: Haiku 5.5 → Sonnet 5.5 → Opus 5.5, override with `CLAUDE_MODEL_FAST` / `_BALANCED` / `_TOP` (e.g. `claude-fable-5-2`) |
 | Ollama / LM Studio | local, free: `OLLAMA_ENABLED`, `LMSTUDIO_ENABLED` |
 | Groq / OpenRouter | `GROQ_API_KEY`, `OPENROUTER_API_KEY` (OpenRouter also gives OpenAI models: `OPENROUTER_MODEL=openai/gpt-4o-mini`) |
 | OpenAI or any OpenAI-compatible router | `AI_PROXY_URL=https://api.openai.com`, `AI_PROXY_API_KEY`, `AI_PROXY_MODEL` (required) — all requests go there, the internal balancer is the fallback |
@@ -454,4 +454,4 @@ npm run db:init     # Initialize database
 
 ---
 
-*ytome v0.98 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*
+*ytome v0.99 · BSD 3-Clause License · Vladyslav V. Prodan · 2026*

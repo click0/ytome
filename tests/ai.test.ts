@@ -144,8 +144,20 @@ describe('claude adapter', () => {
   it('current models per tier; .env overrides them', () => {
     expect(['fast', 'balanced', 'top'].map(t => claude.claudeModel(t as any)))
       .toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
-    process.env.CLAUDE_MODEL_TOP = 'claude-fable-5-1';
-    expect(claude.claudeModel('top')).toBe('claude-fable-5-1');
+    process.env.CLAUDE_MODEL_TOP = 'claude-fable-5-2';
+    expect(claude.claudeModel('top')).toBe('claude-fable-5-2');
+  });
+
+  it('Fable 5.2 is a known model: priced ($8 / $40), effort and server-side fallback', async () => {
+    enable('claude');
+    expect(claude.calcCost('claude-fable-5-2', 1_000_000, 100_000)).toBeCloseTo(12);
+    expect(claude.calcCost('claude-fable-5-1', 1_000_000, 100_000)).toBeCloseTo(15); // попередня ще в таблиці
+    net.create.mockResolvedValueOnce(claudeReply('ok', { model: 'claude-fable-5-2' }));
+    const r = await claude.askClaude({ model: 'claude-fable-5-2', prompt: 'p', effort: 'high' });
+    expect(net.create.mock.calls[0][0]).toMatchObject({
+      max_tokens: 8512, output_config: { effort: 'high' }, fallbacks: 'default',
+    });
+    expect(r.cost_usd).toBeGreaterThan(0);
   });
 
   it('Haiku: effort, thinking headroom, JSON instruction, no server fallback; only text is returned', async () => {
