@@ -56,8 +56,12 @@
   і ключ як `Authorization: Bearer` — ytome не передає `temperature`/`top_p`/`top_k`, документів
   у відповідях асистента й `citations` у повідомленнях користувача, тож запити не змінюються;
   ліцензія SDK тепер Apache 2.0), googleapis 189, @modelcontextprotocol/sdk 1.32.2,
-  axios 1.21.1, dotenv 18.0.10, express-rate-limit 8.7.4, vitest 5.1; FreeBSD у CI —
+  axios 1.21.1, dotenv 18.0.10, express-rate-limit 8.7.4; FreeBSD у CI —
   cross-platform-actions/action 1.7
+- vitest лишається 5.0: новіші тягнуть rolldown ≥ 1.2.16, чий бінарник для FreeBSD зібраний
+  під FreeBSD 15 (`libutil.so.10`) і не завантажується на FreeBSD 14. На роботу ytome це не
+  впливає — rolldown потрібен лише тестам. FreeBSD CI при збої друкує справжню причину
+  (`Shared object … not found`) замість «Cannot find native binding»
 - Claude Fable 5.2 (`claude-fable-5-2`, $8 / $40 за 1M токенів — дешевша за Fable 5.1) у таблиці
   моделей: рахується вартість, працюють `effort` і серверний fallback. Найсильніша модель
   для `CLAUDE_MODEL_TOP`; за замовчуванням і далі Opus 5.5
