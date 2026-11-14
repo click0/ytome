@@ -52,12 +52,13 @@ interface ModelInfo {
   fallbacks: boolean;     // підтримує серверний fallback "default"
 }
 
-/** Поточні моделі (ціни Anthropic API, жовтень 2026) */
+/** Поточні моделі (ціни Anthropic API, листопад 2026) */
 export const MODEL_INFO: Record<string, ModelInfo> = {
   'claude-haiku-5-5':  { input: 0.10, output: 0.50, effort: true, fallbacks: false },
   'claude-sonnet-5-5': { input: 2.00, output: 10.0, effort: true, fallbacks: true },
   'claude-opus-5-5':   { input: 4.00, output: 20.0, effort: true, fallbacks: true },
-  'claude-fable-5-1':  { input: 10.0, output: 50.0, effort: true, fallbacks: true },
+  'claude-fable-5-2':  { input: 8.00, output: 40.0, effort: true, fallbacks: true },
+  'claude-fable-5-1':  { input: 10.0, output: 50.0, effort: true, fallbacks: true }, // попередня, ще доступна
 };
 
 const DEFAULT_MODELS: Record<ClaudeTier, string> = {

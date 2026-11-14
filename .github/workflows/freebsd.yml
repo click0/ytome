@@ -82,3 +82,14 @@ jobs:
           set -e
           npm run build
           node scripts/smoke.mjs
+
+      # Завантажувачі napi-rs (rolldown у vitest) ховають справжню причину за
+      # «Cannot find native binding … cause: [Error]» — друкуємо її
+      - name: Native modules (on failure)
+        if: failure()
+        shell: cpa.sh {0} --sync-files none
+        run: |
+          freebsd-version -ku || true
+          for m in better-sqlite3 @rolldown/binding-freebsd-x64; do
+            node -e 'try { require(process.argv[1]); console.log("ok", process.argv[1]); } catch (e) { console.log("FAIL", process.argv[1]); console.log(e); }' "$m"
+          done

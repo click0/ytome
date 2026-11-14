@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.99.0] - 2026-11-14
+
 ### Security
 - Повний аудит коду й залежностей. Модель, що читає назви, описи, транскрипти й коментарі
   (неперевірений текст), більше не може через інструменти:
@@ -50,11 +52,19 @@
   LIKE-фільтри з `%` і `_`, кешований транскрипт іншою мовою
 
 ### Changed
-- Залежності: @anthropic-ai/sdk 1.3 (перша мажорна; надсилає `anthropic-version: 2026-10-21`
+- Залежності: @anthropic-ai/sdk 1.8 (перша мажорна — 1.x; надсилає `anthropic-version: 2026-10-21`
   і ключ як `Authorization: Bearer` — ytome не передає `temperature`/`top_p`/`top_k`, документів
   у відповідях асистента й `citations` у повідомленнях користувача, тож запити не змінюються;
-  ліцензія SDK тепер Apache 2.0), googleapis 188, @modelcontextprotocol/sdk 1.32.2, axios 1.21,
-  dotenv 18.0.9; FreeBSD у CI — cross-platform-actions/action 1.7
+  ліцензія SDK тепер Apache 2.0), googleapis 189, @modelcontextprotocol/sdk 1.32.2,
+  axios 1.21.1, dotenv 18.0.10, express-rate-limit 8.7.4; FreeBSD у CI —
+  cross-platform-actions/action 1.7
+- vitest лишається 5.0: новіші тягнуть rolldown ≥ 1.2.16, чий бінарник для FreeBSD зібраний
+  під FreeBSD 15 (`libutil.so.10`) і не завантажується на FreeBSD 14. На роботу ytome це не
+  впливає — rolldown потрібен лише тестам. FreeBSD CI при збої друкує справжню причину
+  (`Shared object … not found`) замість «Cannot find native binding»
+- Claude Fable 5.2 (`claude-fable-5-2`, $8 / $40 за 1M токенів — дешевша за Fable 5.1) у таблиці
+  моделей: рахується вартість, працюють `effort` і серверний fallback. Найсильніша модель
+  для `CLAUDE_MODEL_TOP`; за замовчуванням і далі Opus 5.5
 
 ## [0.98.0] - 2026-10-31
 
@@ -196,7 +206,8 @@
 
 - Перший публічний реліз
 
-[Unreleased]: https://github.com/click0/ytome/compare/v0.98...HEAD
+[Unreleased]: https://github.com/click0/ytome/compare/v0.99...HEAD
+[0.99.0]: https://github.com/click0/ytome/compare/v0.98...v0.99
 [0.98.0]: https://github.com/click0/ytome/compare/v0.97...v0.98
 [0.97.0]: https://github.com/click0/ytome/compare/v0.95...v0.97
 [0.95.0]: https://github.com/click0/ytome/compare/v0.90...v0.95
