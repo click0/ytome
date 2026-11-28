@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+### Security
+- youtube-transcript-plus 2.0.5: дуже довгий ID чи URL відео міг на секунди блокувати event loop
+  (GHSA-4p97-cxxv-r4m6). У ytome це недосяжно — ID і так перевіряється (11 символів), — але
+  бібліотеку оновлено
+
+### Changed
+- Залежності: @anthropic-ai/sdk 1.14, googleapis 190, express-rate-limit 8.7.5,
+  youtube-transcript-plus 2.0.5 (тепер зі справжніми TypeScript-типами — виклик бібліотеки
+  типізовано замість `as any`), @types/node 26.6; FreeBSD у CI — cross-platform-actions/action 1.8
+- vitest 5.1: rolldown 1.3.4 (через vite 8.4) знову працює на FreeBSD 14 — його бінарник
+  більше не вимагає `libutil.so.10`
+
 ## [0.99.0] - 2026-11-14
 
 ### Security
