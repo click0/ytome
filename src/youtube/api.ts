@@ -12,6 +12,7 @@ import { createLogger } from '../logger';
 import { safeErrorMessage } from '../redact';
 import { classifyTranscriptFailure, TranscriptUnavailableError, type TranscriptDiagnostics } from './transcript-errors';
 import { whisperProvider, transcribeWithWhisper } from './whisper';
+import type { FetchParams, TranscriptConfig } from 'youtube-transcript-plus';
 
 dotenv.config({ quiet: true });
 
@@ -252,16 +253,6 @@ export interface TranscriptResult {
   source: string;
 }
 
-/** Параметри, з якими youtube-transcript-plus викликає fetch-хуки */
-interface HookParams {
-  url: string;
-  method?: string;
-  body?: string;
-  headers?: Record<string, string>;
-  lang?: string;
-  userAgent?: string;
-}
-
 /**
  * Транскрипт з YouTube; якщо не вийшло — yt-dlp.
  * Кидає TranscriptUnavailableError з причиною (блок IP, вхід, немає субтитрів…).
@@ -281,7 +272,7 @@ export async function fetchTranscript(
 
     // Бібліотека чекає від хуків Response-подібний об'єкт (ok/status/text/json).
     // Хуки додають проксі-агент і Cookie профілю та записують, що відповів YouTube.
-    const request = async (p: HookParams, record: (status: number, body: string) => void) => {
+    const request = async (p: FetchParams, record: (status: number, body: string) => void): Promise<Response> => {
       const res = await axios.request<string>({
         url: p.url,
         method: p.method || 'GET',
@@ -303,31 +294,34 @@ export async function fetchTranscript(
       });
       const body = typeof res.data === 'string' ? res.data : String(res.data ?? '');
       record(res.status, body);
-      return {
+      // Бібліотека читає з відповіді лише ok / status / text() / json()
+      const response: Pick<Response, 'ok' | 'status' | 'text' | 'json'> = {
         ok: res.status >= 200 && res.status < 300,
         status: res.status,
         text: async () => body,
         json: async () => JSON.parse(body),
       };
+      return response as Response;
     };
 
-    const segments = await fetchYT(videoId, {
+    const config: TranscriptConfig = {
       lang: lang || undefined,
-      videoFetch: (p: HookParams) => request(p, (status, body) => {
+      videoFetch: p => request(p, (status, body) => {
         diag.videoPageStatus = status;
         diag.recaptcha = body.includes('class="g-recaptcha"');
       }),
-      playerFetch: (p: HookParams) => request(p, (status, body) => {
+      playerFetch: p => request(p, (status, body) => {
         diag.playerStatus = status;
         try { diag.playability = JSON.parse(body).playabilityStatus; } catch { /* не JSON */ }
       }),
-      transcriptFetch: (p: HookParams) => request(p, status => { diag.transcriptStatus = status; }),
-    } as any);
+      transcriptFetch: p => request(p, status => { diag.transcriptStatus = status; }),
+    };
+    const segments = await fetchYT(videoId, config);
 
-    const text = segments.map((s: any) => s.text).join(' ');
+    const text = segments.map(s => s.text).join(' ');
     return {
       text,
-      segments: segments.map((s: any) => ({
+      segments: segments.map(s => ({
         start: s.offset,
         dur:   s.duration,
         text:  s.text,
